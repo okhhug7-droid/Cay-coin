@@ -437,4 +437,3 @@ async def check_birthdays_loop():
         await asyncio.sleep(86400)
 
 bot.run(bot.TOKEN)
-```[cite: 1, 2]
