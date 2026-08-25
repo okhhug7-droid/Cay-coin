@@ -21,78 +21,78 @@ CONFIG_FILE = 'config.json'
 
 # Giới hạn số lần làm mỗi ngày cho từng dịch vụ đã cập nhật theo yêu cầu mới nhất
 DAILY_LIMITS = {
-    "octolink": 150,              # Octolink: 150 lần[cite: 3]
-    "link4m": 2,                  # Link4m: 2 lần[cite: 3]
-    "bbmkts": 1,                  # bbmkts: 1 lần[cite: 3]
-    "phienchoso_review": 2,       # Phienchoso review: 2 lần[cite: 3]
-    "phienchoso_tukhoa": 2,       # Phienchoso từ khóa: 2 lần[cite: 3]
-    "linktop": 1,                 # Linktop: 1 lần[cite: 3]
-    "site2s": 2,                  # Site2s: 2 lần[cite: 3]
-    "taskdaily_review_map": 2,    # Taskdaily review: 2 lần[cite: 3]
-    "taskdaily_organic": 3,       # Organic: 3 lần[cite: 3]
-    "taskdaily_backlink": 3,      # Backlink: 3 lần[cite: 3]
-    "traffichub": 2,              # Traffic hub: 2 lần[cite: 3]
-    "lentop": 1,                  # Lentop: 1 lần[cite: 3]
-    "trafficfucser": 2,           # Graffitic (Trafficfucser): 2 lần[cite: 3]
+    "octolink": 150,              # Octolink: 150 lần
+    "link4m": 2,                  # Link4m: 2 lần
+    "bbmkts": 1,                  # bbmkts: 1 lần
+    "phienchoso_review": 2,       # Phienchoso review: 2 lần
+    "phienchoso_tukhoa": 2,       # Phienchoso từ khóa: 2 lần
+    "linktop": 1,                 # Linktop: 1 lần
+    "site2s": 2,                  # Site2s: 2 lần
+    "taskdaily_review_map": 2,    # Taskdaily review: 2 lần
+    "taskdaily_organic": 3,       # Organic: 3 lần
+    "taskdaily_backlink": 3,      # Backlink: 3 lần
+    "traffichub": 2,              # Traffic hub: 2 lần
+    "lentop": 1,                  # Lentop: 1 lần
+    "trafficfucser": 2,           # Graffitic (Trafficfucser): 2 lần
 }
 
 API_CONFIGS = {
     "octolink": {
-        "url": "https://octolink.vip/api?api=1617ae1eea0cf96a7f9312494a10b35507b65e3f&url=",[cite: 3]
+        "url": "https://octolink.vip/api?api=1617ae1eea0cf96a7f9312494a10b35507b65e3f&url=",
         "method": "GET"
     },
     "link4m": {
-        "url": "https://link4m.co/api-shorten/v2?api=6a714550eb578b3aa004e7e9&url=",[cite: 3]
+        "url": "https://link4m.co/api-shorten/v2?api=6a714550eb578b3aa004e7e9&url=",
         "method": "GET"
     },
     "bbmkts": {
-        "url": "https://bbmkts.com/dapi?token=ebb7e38aa5335a1ef5458ea4&longurl=",[cite: 3]
+        "url": "https://bbmkts.com/dapi?token=ebb7e38aa5335a1ef5458ea4&longurl=",
         "method": "GET"
     },
     "phienchoso_review": {
-        "url": "https://phienchoso.com/api_task/review.php?token=28d1d7e7fbcb906353d1ecc2526a14a925068702b5db705e6e9bce2f5f7c02dc&url=",[cite: 3]
+        "url": "https://phienchoso.com/api_task/review.php?token=28d1d7e7fbcb906353d1ecc2526a14a925068702b5db705e6e9bce2f5f7c02dc&url=",
         "method": "GET"
     },
     "phienchoso_tukhoa": {
-        "url": "https://phienchoso.com/api_task/tukhoa.php?token=28d1d7e7fbcb906353d1ecc2526a14a925068702b5db705e6e9bce2f5f7c02dc&url=",[cite: 3]
+        "url": "https://phienchoso.com/api_task/tukhoa.php?token=28d1d7e7fbcb906353d1ecc2526a14a925068702b5db705e6e9bce2f5f7c02dc&url=",
         "method": "GET"
     },
     "linktop": {
-        "url": "https://linktop.one/api?api=VLieiZQCt3raHn6kPmH2Xr9BNJoF5UFCBPCk8p6KPY5Dcl&url=",[cite: 3]
+        "url": "https://linktop.one/api?api=VLieiZQCt3raHn6kPmH2Xr9BNJoF5UFCBPCk8p6KPY5Dcl&url=",
         "method": "GET"
     },
     "site2s": {
-        "url": "https://site2s.com/api?api=e3f7546b1e04f72ab26d66b715b65f10d7eaf5e7&url=",[cite: 3]
+        "url": "https://site2s.com/api?api=e3f7546b1e04f72ab26d66b715b65f10d7eaf5e7&url=",
         "method": "GET"
     },
     "taskdaily_review_map": {
         "url": "https://taskdaily.app/api/v1/shortlink",
         "method": "POST",
         "task_type": "review",
-        "headers": {'X-API-Key': 'tdl_4UHkzF6LRfse7D6ZYsgFtzQJC73nWmvy', 'Content-Type': 'application/json'}[cite: 3]
+        "headers": {'X-API-Key': 'tdl_4UHkzF6LRfse7D6ZYsgFtzQJC73nWmvy', 'Content-Type': 'application/json'}
     },
     "taskdaily_organic": {
         "url": "https://taskdaily.app/api/v1/shortlink",
         "method": "POST",
         "task_type": "organic",
-        "headers": {'X-API-Key': 'tdl_4UHkzF6LRfse7D6ZYsgFtzQJC73nWmvy', 'Content-Type': 'application/json'}[cite: 3]
+        "headers": {'X-API-Key': 'tdl_4UHkzF6LRfse7D6ZYsgFtzQJC73nWmvy', 'Content-Type': 'application/json'}
     },
     "taskdaily_backlink": {
         "url": "https://taskdaily.app/api/v1/shortlink",
         "method": "POST",
         "task_type": "backlink",
-        "headers": {'X-API-Key': 'tdl_4UHkzF6LRfse7D6ZYsgFtzQJC73nWmvy', 'Content-Type': 'application/json'}[cite: 3]
+        "headers": {'X-API-Key': 'tdl_4UHkzF6LRfse7D6ZYsgFtzQJC73nWmvy', 'Content-Type': 'application/json'}
     },
     "traffichub": {
-        "url": "https://system.traffichub.vn/api/api?api_key=48a81726d5068fd1b64b0a9fb60c364c&type=code&code=GIFT-2026",[cite: 3]
+        "url": "https://system.traffichub.vn/api/api?api_key=48a81726d5068fd1b64b0a9fb60c364c&type=code&code=GIFT-2026",
         "method": "GET"
     },
     "lentop": {
-        "url": "https://lentop.one/api?api=wj3WIDMxyNAwnGO6UJo35tdP&url=",[cite: 3]
+        "url": "https://lentop.one/api?api=wj3WIDMxyNAwnGO6UJo35tdP&url=",
         "method": "GET"
     },
     "trafficfucser": {
-        "url": "https://manager.gtraffic.io/api/cong-khai/tao-lien-ket?apikey=06f3d31cb9a84e998e2318b1aaee8b33&url=",[cite: 3]
+        "url": "https://manager.gtraffic.io/api/cong-khai/tao-lien-ket?apikey=06f3d31cb9a84e998e2318b1aaee8b33&url=",
         "method": "GET"
     }
 }
@@ -130,7 +130,6 @@ def write_config(data):
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# Khởi tạo Flask App
 app = Flask(__name__)
 CORS(app)
 
@@ -207,7 +206,6 @@ def check_status():
         
     return jsonify({"success": False})
 
-# ================= CẤU HÌNH BOT DISCORD =================
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
@@ -254,7 +252,6 @@ async def shorten_with_api(service_name, destination_url):
             
     return destination_url
 
-# ================= DROPDOWN CHỌN KÊNH THÔNG BÁO =================
 class ChannelSelectDropdown(discord.ui.Select):
     def __init__(self, guild):
         self.guild = guild
@@ -311,7 +308,6 @@ async def setupkenh_error(interaction: discord.Interaction, error):
     else:
         await interaction.response.send_message("❌ Đã có lỗi xảy ra khi thực thi lệnh.", ephemeral=True)
 
-# ================= DROPDOWN CHỌN LINK VƯỢT =================
 class LinkSelectDropdown(discord.ui.Select):
     def __init__(self, user_id):
         self.user_id = user_id
