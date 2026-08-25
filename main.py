@@ -237,20 +237,24 @@ async def shorten_with_api(service_name, destination_url):
                 async with session.get(api_url) as resp:
                     if resp.content_type == 'application/json':
                         data = await resp.json()
-                        return data.get("shortenedUrl") or data.get("url") or data.get("link") or destination_url
+                        short_link = data.get("shortenedUrl") or data.get("url") or data.get("link")
+                        if short_link and short_link.startswith("http") and destination_url not in short_link:
+                            return short_link.strip()
                     else:
                         text_res = await resp.text()
-                        if text_res.startswith("http"):
+                        if text_res.startswith("http") and destination_url not in text_res:
                             return text_res.strip()
             elif config["method"] == "POST":
                 async with session.post(config["url"], headers=config["headers"], json={"url": destination_url, "taskType": config.get("task_type", "review")}) as resp:
                     if resp.content_type == 'application/json':
                         data = await resp.json()
-                        return data.get("shortenedUrl") or data.get("url") or destination_url
+                        short_link = data.get("shortenedUrl") or data.get("url")
+                        if short_link and short_link.startswith("http") and destination_url not in short_link:
+                            return short_link.strip()
         except Exception as e:
             print(f"❌ Lỗi gọi API {service_name}: {e}")
             
-    return destination_url
+    return None
 
 class ChannelSelectDropdown(discord.ui.Select):
     def __init__(self, guild):
@@ -393,6 +397,9 @@ async def nhancoin(interaction: discord.Interaction):
     random_code = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
     url_goc = f"{WEB_GITHUB_URL}?r={random_code}&user={user_id}"
     link_rut_gon = await shorten_with_api(chosen_service, url_goc)
+
+    if not link_rut_gon:
+        return await interaction.edit_original_response(content=f"❌ Dịch vụ **{chosen_service.upper()}** đang gặp sự cố hoặc lỗi API. Vui lòng chọn dịch vụ khác nhé!", embed=None, view=None)
 
     result_embed = discord.Embed(title="🪙 Xác Nhận Vượt Link", color=0x38bdf8)
     result_embed.description = (
