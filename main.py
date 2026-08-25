@@ -36,7 +36,7 @@ def write_db(data):
 
 # ================= WEB SERVER API CHO RAILWAY & RENDER =================
 async def handle_ping(request):
-    return web.Response(text="Bot is running and alive!")
+    return web.Response(text="OK", status=200)
 
 async def handle_save_user(request):
     try:
