@@ -6,19 +6,18 @@ import random
 import string
 import os
 import json
-from threading import Thread
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import aiohttp
 from datetime import datetime
 import pytz
+from threading import Thread
 
 # ================= CẤU HÌNH HỆ THỐNG & API RÚT GỌN =================
 WEB_GITHUB_URL = "https://declatui.github.io/nhan-ma/"
 DB_FILE = 'database.json'
 CREATOR_NAME = "ph.huyy"
 
-# Cấu hình tất cả các API tương ứng với giao diện caytien.site
 API_CONFIGS = {
     "phienchoso_review": {
         "url": "https://phienchoso.com/api_task/review.php?token=28d1d7e7fbcb906353d1ecc2526a14a925068702b5db705e6e9bce2f5f7c02dc&url=",
@@ -88,7 +87,6 @@ def get_vietnam_time():
     tz = pytz.timezone('Asia/Ho_Chi_Minh')
     return datetime.now(tz).strftime('%d/%m/%Y %H:%M:%S')
 
-# --- Quản lý Database cục bộ ---
 def read_db():
     if not os.path.exists(DB_FILE):
         return {}
@@ -102,8 +100,7 @@ def write_db(data):
     with open(DB_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-
-# ================= FLASK WEB SERVER =================
+# Khởi tạo Flask App
 app = Flask(__name__)
 CORS(app)
 
@@ -116,12 +113,10 @@ def save_user():
     req = request.json
     user_id = str(req.get('user_id'))
     db = read_db()
-    
     if user_id not in db or not isinstance(db[user_id], dict):
         db[user_id] = {"total_completed": 0, "coins": 0, "status": False}
     else:
         db[user_id]["status"] = False
-        
     write_db(db)
     return jsonify({"success": True})
 
@@ -129,33 +124,23 @@ def save_user():
 def complete():
     user_id = str(request.args.get('user_id'))
     db = read_db()
-    
     if user_id in db and isinstance(db[user_id], dict):
         db[user_id]["status"] = True
         write_db(db)
         return f"<h1>🎉 Vượt link thành công!</h1><p>Bạn có thể quay lại Discord để nhận thưởng.</p><hr><small>Hệ thống phát triển bởi {CREATOR_NAME} - Vĩnh Phúc, VN</small>"
-        
     return "<h1>Link không hợp lệ hoặc chưa được khởi tạo!</h1>"
 
 @app.route('/check-status', methods=['GET'])
 def check_status():
     user_id = str(request.args.get('user_id'))
     db = read_db()
-    
     if user_id in db and isinstance(db[user_id], dict) and db[user_id].get("status") == True:
         db[user_id]["total_completed"] = db[user_id].get("total_completed", 0) + 1
         db[user_id]["coins"] = db[user_id].get("coins", 0) + 300
         db[user_id]["status"] = False
         write_db(db)
         return jsonify({"success": True})
-        
     return jsonify({"success": False})
-
-def run_flask():
-    # Ép cứng cổng chạy là 8080 theo yêu cầu
-    port = 8080
-    app.run(host='0.0.0.0', port=port)
-
 
 # ================= CẤU HÌNH BOT DISCORD =================
 intents = discord.Intents.default()
@@ -177,8 +162,6 @@ bot = MyBot()
 async def on_ready():
     print(f'Bot đã đăng nhập thành công với tên: {bot.user} (Vĩnh Phúc, VN)')
 
-
-# Hàm gọi API rút gọn tự động
 async def shorten_with_api(service_name, destination_url):
     config = API_CONFIGS.get(service_name)
     if not config:
@@ -196,7 +179,6 @@ async def shorten_with_api(service_name, destination_url):
                         text_res = await resp.text()
                         if text_res.startswith("http"):
                             return text_res.strip()
-            
             elif config["method"] == "POST":
                 async with session.post(config["url"], headers=config["headers"], json={"url": destination_url, "taskType": config.get("task_type", "review")}) as resp:
                     if resp.content_type == 'application/json':
@@ -207,8 +189,6 @@ async def shorten_with_api(service_name, destination_url):
             
     return destination_url
 
-
-# ================= GIAO DIỆN MENU CHỌN (DROPDOWN) =================
 class LinkSelectDropdown(discord.ui.Select):
     def __init__(self, user_id):
         self.user_id = user_id
@@ -238,22 +218,11 @@ class LinkSelectDropdown(discord.ui.Select):
             return await interaction.response.send_message("❌ Bạn không thể sử dụng bảng chọn này!", ephemeral=True)
         
         self.selected_service = self.values[0]
-        
         coin_mapping = {
-            "phienchoso_review": 1000,
-            "taskdaily_review_map": 1000,
-            "taskdaily_organic": 350,
-            "uptolink4": 450,
-            "bbmkts": 450,
-            "phienchoso_tukhoa": 380,
-            "taskdaily_backlink": 300,
-            "trafficfucser": 200,
-            "traffic4k": 250,
-            "traffichub": 300,
-            "site2s": 250,
-            "lentop": 300,
-            "linktop": 250,
-            "link4m": 370
+            "phienchoso_review": 1000, "taskdaily_review_map": 1000, "taskdaily_organic": 350,
+            "uptolink4": 450, "bbmkts": 450, "phienchoso_tukhoa": 380, "taskdaily_backlink": 300,
+            "trafficfucser": 200, "traffic4k": 250, "traffichub": 300, "site2s": 250,
+            "lentop": 300, "linktop": 250, "link4m": 370
         }
         self.earned_coins = coin_mapping.get(self.selected_service, 300)
         self.view.stop()
@@ -273,18 +242,12 @@ class LinkSelectView(discord.ui.View):
     def earned_coins(self):
         return self.dropdown.earned_coins
 
-
-# ================= SLASH COMMAND: NHÂN COIN =================
 @bot.tree.command(name="nhancoin", description="Mở bảng chọn dịch vụ vượt link kiếm coin")
 async def nhancoin(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
     view = LinkSelectView(user_id)
     
-    embed = discord.Embed(
-        title="🪙 HỆ THỐNG VƯỢT LINK KIẾM COIN",
-        description="Vui lòng bấm vào danh sách bên dưới và **chọn loại link vượt** bạn muốn thực hiện:",
-        color=0x38bdf8
-    )
+    embed = discord.Embed(title="🪙 HỆ THỐNG VƯỢT LINK KIẾM COIN", description="Vui lòng bấm vào danh sách bên dưới và **chọn loại link vượt** bạn muốn thực hiện:", color=0x38bdf8)
     embed.set_footer(text=f"Tác giả: {CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time()}")
 
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
@@ -306,7 +269,6 @@ async def nhancoin(interaction: discord.Interaction):
 
     random_code = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
     url_goc = f"{WEB_GITHUB_URL}?r={random_code}&user={user_id}"
-
     link_rut_gon = await shorten_with_api(chosen_service, url_goc)
 
     result_embed = discord.Embed(title="🪙 Xác Nhận Vượt Link", color=0x38bdf8)
@@ -331,7 +293,6 @@ async def nhancoin(interaction: discord.Interaction):
                         if user_id in users_data:
                             users_data[user_id]["coins"] = users_data[user_id].get("coins", 300) - 300 + reward_coins
                             write_db(users_data)
-
                         await interaction.followup.send(f"🎉 Chúc mừng {interaction.user.mention}! Bạn đã vượt link thành công qua **{chosen_service.upper()}** và nhận được **{reward_coins} Coin**!", ephemeral=True)
                         return
         except:
@@ -339,8 +300,6 @@ async def nhancoin(interaction: discord.Interaction):
 
     await interaction.followup.send("⏰ Hết thời gian chờ xác thực!", ephemeral=True)
 
-
-# ================= SLASH COMMAND: SỐ DƯ COIN =================
 @bot.tree.command(name="sodu", description="Kiểm tra số dư coin và số lần vượt link của bạn")
 async def sodu(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
@@ -362,8 +321,6 @@ async def sodu(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-
-# ================= SLASH COMMAND: TOP VƯỢT LINK =================
 @bot.tree.command(name="topvuotlink", description="Xem bảng xếp hạng top đầu vượt link nhiều nhất")
 async def topvuotlink(interaction: discord.Interaction):
     if not os.path.exists(DB_FILE):
@@ -373,12 +330,7 @@ async def topvuotlink(interaction: discord.Interaction):
     if not users_data:
         return await interaction.response.send_message("📊 Chưa có dữ liệu bảng xếp hạng!", ephemeral=True)
 
-    sorted_users = []
-    for uid, info in users_data.items():
-        total = info.get("total_completed", 0) if isinstance(info, dict) else 0
-        sorted_users.append((uid, total))
-
-    sorted_users = sorted(sorted_users, key=lambda x: x[1], reverse=True)
+    sorted_users = sorted([(uid, info.get("total_completed", 0) if isinstance(info, dict) else 0) for uid, info in users_data.items()], key=lambda x: x[1], reverse=True)
     
     embed = discord.Embed(title="🏆 BẢNG XẾP HẠNG VƯỢT LINK", description="Danh sách thành viên chăm chỉ vượt link:", color=discord.Color.gold())
     medal_emojis = ["🥇", "🥈", "🥉"]
@@ -397,16 +349,20 @@ async def topvuotlink(interaction: discord.Interaction):
     embed.set_footer(text=f"Tác giả: {CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time()}")
     await interaction.response.send_message(embed=embed)
 
-
-# ================= KHỞI CHẠY ỨNG DỤNG SONG SONG =================
-if __name__ == '__main__':
+# Khởi chạy Discord Bot ngầm bằng Thread để Gunicorn quản lý Flask trực tiếp
+def run_bot():
     token = os.getenv('BOT_TOKEN')
-    if not token:
-        print("❌ LỖI: Chưa cấu hình biến môi trường BOT_TOKEN!")
-    else:
-        flask_thread = Thread(target=run_flask)
-        flask_thread.daemon = True
-        flask_thread.start()
-        print("🌐 Flask Web Server đã khởi chạy ngầm thành công trên cổng 8080!")
-
+    if token:
         bot.run(token)
+    else:
+        print("❌ LỖI: Chưa cấu hình biến môi trường BOT_TOKEN!")
+
+if __name__ == '__main__':
+    # Chạy Flask trực tiếp nếu test local
+    app.run(host='0.0.0.0', port=8080)
+else:
+    # Khi chạy trên Railway qua Gunicorn, tự động bật Bot ở một luồng riêng biệt
+    bot_thread = Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
+    print("🤖 Discord Bot đã được kích hoạt chạy ngầm trên Cloud!")
