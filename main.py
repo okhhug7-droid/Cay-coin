@@ -17,6 +17,24 @@ from threading import Thread
 WEB_GITHUB_URL = "https://declatui.github.io/nhan-ma/"
 DB_FILE = 'database.json'
 CREATOR_NAME = "ph.huyy"
+CONFIG_FILE = 'config.json'  # File lưu cấu hình kênh thông báo
+
+# Giới hạn số lần làm mỗi ngày cho từng dịch vụ theo yêu cầu
+DAILY_LIMITS = {
+    "phienchoso_review": 2,       # Review: 2 nhiệm vụ
+    "taskdaily_review_map": 3,    # Taskdaily: 3 nhiệm vụ
+    "taskdaily_organic": 3,       # Taskdaily: 3 nhiệm vụ
+    "taskdaily_backlink": 3,      # Taskdaily: 3 nhiệm vụ
+    "uptolink4": 100,             # Uptolink: 100 nhiệm vụ
+    "bbmkts": 1,                  # Bbmkts: 1 nhiệm vụ
+    "phienchoso_tukhoa": 2,       # Phienchoso từ khóa: 2 nhiệm vụ
+    "trafficfucser": 2,           # Gtraffic / Trafficfucser: 2 nhiệm vụ
+    "traffichub": 3,              # Traffichub: 3 nhiệm vụ
+    "site2s": 2,                  # Site2s: 2 nhiệm vụ
+    "lentop": 1,                  # Lentop: 1 nhiệm vụ
+    "linktop": 1,                 # Linktop: 1 nhiệm vụ
+    "link4m": 2                   # Link4m: 2 nhiệm vụ
+}
 
 API_CONFIGS = {
     "phienchoso_review": {
@@ -57,10 +75,6 @@ API_CONFIGS = {
         "url": "https://manager.gtraffic.io/api/cong-khai/tao-lien-ket?apikey=06f3d31cb9a84e998e2318b1aaee8b33&url=",
         "method": "GET"
     },
-    "traffic4k": {
-        "url": "https://traffic4k.com/apidevelop?api=f2715398dc71261b936af6a8f31c8f29&url=",
-        "method": "GET"
-    },
     "traffichub": {
         "url": "https://system.traffichub.vn/api/api?api_key=48a81726d5068fd1b64b0a9fb60c364c&type=code&code=GIFT-2026",
         "method": "GET"
@@ -85,7 +99,10 @@ API_CONFIGS = {
 
 def get_vietnam_time():
     tz = pytz.timezone('Asia/Ho_Chi_Minh')
-    return datetime.now(tz).strftime('%d/%m/%Y %H:%M:%S')
+    return datetime.now(tz)
+
+def get_current_date_str():
+    return get_vietnam_time().strftime('%d/%m/%Y')
 
 def read_db():
     if not os.path.exists(DB_FILE):
@@ -100,6 +117,19 @@ def write_db(data):
     with open(DB_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
+def read_config():
+    if not os.path.exists(CONFIG_FILE):
+        return {}
+    with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+        try:
+            return json.load(f)
+        except:
+            return {}
+
+def write_config(data):
+    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
 # Khởi tạo Flask App
 app = Flask(__name__)
 CORS(app)
@@ -112,11 +142,33 @@ def home():
 def save_user():
     req = request.json
     user_id = str(req.get('user_id'))
+    service = req.get('service')
+    today = get_current_date_str()
+    
     db = read_db()
     if user_id not in db or not isinstance(db[user_id], dict):
-        db[user_id] = {"total_completed": 0, "coins": 0, "status": False}
-    else:
-        db[user_id]["status"] = False
+        db[user_id] = {
+            "total_completed": 0, 
+            "coins": 0, 
+            "status": False, 
+            "last_date": today,
+            "daily_tasks": {}
+        }
+    
+    user_data = db[user_id]
+    if user_data.get("last_date") != today:
+        user_data["last_date"] = today
+        user_data["daily_tasks"] = {}
+
+    if service:
+        daily_tasks = user_data.setdefault("daily_tasks", {})
+        current_count = daily_tasks.get(service, 0)
+        limit = DAILY_LIMITS.get(service, 10)
+        
+        if current_count >= limit:
+            return jsonify({"success": False, "message": f"Bạn đã đạt giới hạn ({limit} lần) của dịch vụ này trong ngày hôm nay!"})
+
+    user_data["status"] = False
     write_db(db)
     return jsonify({"success": True})
 
@@ -133,13 +185,26 @@ def complete():
 @app.route('/check-status', methods=['GET'])
 def check_status():
     user_id = str(request.args.get('user_id'))
+    service = request.args.get('service')
     db = read_db()
+    
     if user_id in db and isinstance(db[user_id], dict) and db[user_id].get("status") == True:
-        db[user_id]["total_completed"] = db[user_id].get("total_completed", 0) + 1
-        db[user_id]["coins"] = db[user_id].get("coins", 0) + 300
-        db[user_id]["status"] = False
+        today = get_current_date_str()
+        user_data = db[user_id]
+        
+        if user_data.get("last_date") != today:
+            user_data["last_date"] = today
+            user_data["daily_tasks"] = {}
+            
+        daily_tasks = user_data.setdefault("daily_tasks", {})
+        if service:
+            daily_tasks[service] = daily_tasks.get(service, 0) + 1
+
+        user_data["total_completed"] = user_data.get("total_completed", 0) + 1
+        user_data["status"] = False
         write_db(db)
         return jsonify({"success": True})
+        
     return jsonify({"success": False})
 
 # ================= CẤU HÌNH BOT DISCORD =================
@@ -189,27 +254,87 @@ async def shorten_with_api(service_name, destination_url):
             
     return destination_url
 
+# ================= DROPDOWN CHỌN KÊNH THÔNG BÁO =================
+class ChannelSelectDropdown(discord.ui.Select):
+    def __init__(self, guild):
+        self.guild = guild
+        # Lọc lấy các kênh văn bản trong server (tối đa 25 kênh do giới hạn Discord)
+        text_channels = [ch for ch in guild.text_channels][:25]
+        
+        options = []
+        for ch in text_channels:
+            options.append(discord.SelectOption(
+                label=ch.name,
+                value=str(ch.id),
+                description=f"Chọn kênh #{ch.name} làm kênh thông báo"
+            ))
+            
+        if not options:
+            options.append(discord.SelectOption(label="Không có kênh văn bản", value="none"))
+
+        super().__init__(placeholder="📂 Chọn kênh thông báo thành công...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "none":
+            return await interaction.response.send_message("❌ Server không có kênh văn bản hợp lệ!", ephemeral=True)
+            
+        channel_id = int(self.values[0])
+        guild_id = str(self.guild.id)
+        
+        # Lưu vào file cấu hình
+        config = read_config()
+        config[guild_id] = channel_id
+        write_config(config)
+        
+        selected_channel = self.guild.get_channel(channel_id)
+        await interaction.response.edit_message(content=f"✅ Đã thiết lập thành công kênh thông báo kết quả vượt link là: {selected_channel.mention}", view=None)
+
+class ChannelSelectView(discord.ui.View):
+    def __init__(self, guild):
+        super().__init__(timeout=60)
+        self.add_item(ChannelSelectDropdown(guild))
+
+@bot.tree.command(name="setupkenh", description="Mở bảng chọn kênh để thiết lập kênh thông báo vượt link (Admin)")
+@app_commands.checks.has_permissions(administrator=True)
+async def setupkenh(interaction: discord.Interaction):
+    view = ChannelSelectView(interaction.guild)
+    embed = discord.Embed(
+        title="⚙️ THIẾT LẬP KÊNH THÔNG BÁO",
+        description="Vui lòng chọn kênh bên dưới từ danh sách để làm nơi gửi thông báo khi có thành viên vượt link thành công:",
+        color=0x38bdf8
+    )
+    embed.set_footer(text=f"to by {CREATOR_NAME} | Vĩnh Phúc, VN")
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+@setupkenh.error
+async def setupkenh_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.errors.MissingPermissions):
+        await interaction.response.send_message("❌ Bạn cần quyền **Administrator** để sử dụng lệnh này!", ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ Đã có lỗi xảy ra khi thực thi lệnh.", ephemeral=True)
+
+# ================= DROPDOWN CHỌN LINK VƯỢT =================
 class LinkSelectDropdown(discord.ui.Select):
     def __init__(self, user_id):
         self.user_id = user_id
         self.selected_service = None
         self.earned_coins = 300
 
+        custom_emoji = discord.PartialEmoji.from_str("<a:emoji_45:1541782094714511400>")
         options = [
-            discord.SelectOption(label="Phienchoso Review", description="+1,000 VNĐ (~1,000 Coin)", emoji="🪙", value="phienchoso_review"),
-            discord.SelectOption(label="Taskdaily Review Map", description="+1,000 VNĐ (~1,000 Coin)", emoji="🪙", value="taskdaily_review_map"),
-            discord.SelectOption(label="Taskdaily Organic", description="+350 VNĐ (~350 Coin)", emoji="⚡", value="taskdaily_organic"),
-            discord.SelectOption(label="Uptolink 4", description="+450 VNĐ (~450 Coin)", emoji="🔗", value="uptolink4"),
-            discord.SelectOption(label="Bbmkts", description="+450 VNĐ (~450 Coin)", emoji="🌐", value="bbmkts"),
-            discord.SelectOption(label="Phienchoso Tu Khoa", description="+380 VNĐ (~380 Coin)", emoji="🪙", value="phienchoso_tukhoa"),
-            discord.SelectOption(label="Taskdaily Backlink", description="+300 VNĐ (~300 Coin)", emoji="⚡", value="taskdaily_backlink"),
-            discord.SelectOption(label="Trafficfucser", description="+200 VNĐ (~200 Coin)", emoji="🌐", value="trafficfucser"),
-            discord.SelectOption(label="Traffic4k", description="+250 VNĐ (~250 Coin)", emoji="🌐", value="traffic4k"),
-            discord.SelectOption(label="TrafficHub", description="+300 VNĐ (~300 Coin)", emoji="🌐", value="traffichub"),
-            discord.SelectOption(label="Site2s", description="+250 VNĐ (~250 Coin)", emoji="🌐", value="site2s"),
-            discord.SelectOption(label="Lentop", description="+300 VNĐ (~300 Coin)", emoji="🌐", value="lentop"),
-            discord.SelectOption(label="Linktop", description="+250 VNĐ (~250 Coin)", emoji="🌐", value="linktop"),
-            discord.SelectOption(label="Link4m", description="+370 VNĐ (~370 Coin)", emoji="🔗", value="link4m"),
+            discord.SelectOption(label="Phienchoso Review", description="+1,000 VNĐ (~1,000 Coin)", emoji=custom_emoji, value="phienchoso_review"),
+            discord.SelectOption(label="Taskdaily Review Map", description="+1,000 VNĐ (~1,000 Coin)", emoji=custom_emoji, value="taskdaily_review_map"),
+            discord.SelectOption(label="Taskdaily Organic", description="+350 VNĐ (~350 Coin)", emoji=custom_emoji, value="taskdaily_organic"),
+            discord.SelectOption(label="Uptolink 4", description="+450 VNĐ (~450 Coin)", emoji=custom_emoji, value="uptolink4"),
+            discord.SelectOption(label="Bbmkts", description="+450 VNĐ (~450 Coin)", emoji=custom_emoji, value="bbmkts"),
+            discord.SelectOption(label="Phienchoso Tu Khoa", description="+380 VNĐ (~380 Coin)", emoji=custom_emoji, value="phienchoso_tukhoa"),
+            discord.SelectOption(label="Taskdaily Backlink", description="+300 VNĐ (~300 Coin)", emoji=custom_emoji, value="taskdaily_backlink"),
+            discord.SelectOption(label="Trafficfucser", description="+200 VNĐ (~200 Coin)", emoji=custom_emoji, value="trafficfucser"),
+            discord.SelectOption(label="TrafficHub", description="+300 VNĐ (~300 Coin)", emoji=custom_emoji, value="traffichub"),
+            discord.SelectOption(label="Site2s", description="+250 VNĐ (~250 Coin)", emoji=custom_emoji, value="site2s"),
+            discord.SelectOption(label="Lentop", description="+300 VNĐ (~300 Coin)", emoji=custom_emoji, value="lentop"),
+            discord.SelectOption(label="Linktop", description="+250 VNĐ (~250 Coin)", emoji=custom_emoji, value="linktop"),
+            discord.SelectOption(label="Link4m", description="+370 VNĐ (~370 Coin)", emoji=custom_emoji, value="link4m"),
         ]
         super().__init__(placeholder="Chọn loại link vượt kiếm tiền...", min_values=1, max_values=1, options=options)
 
@@ -221,7 +346,7 @@ class LinkSelectDropdown(discord.ui.Select):
         coin_mapping = {
             "phienchoso_review": 1000, "taskdaily_review_map": 1000, "taskdaily_organic": 350,
             "uptolink4": 450, "bbmkts": 450, "phienchoso_tukhoa": 380, "taskdaily_backlink": 300,
-            "trafficfucser": 200, "traffic4k": 250, "traffichub": 300, "site2s": 250,
+            "trafficfucser": 200, "traffichub": 300, "site2s": 250,
             "lentop": 300, "linktop": 250, "link4m": 370
         }
         self.earned_coins = coin_mapping.get(self.selected_service, 300)
@@ -248,7 +373,8 @@ async def nhancoin(interaction: discord.Interaction):
     view = LinkSelectView(user_id)
     
     embed = discord.Embed(title="🪙 HỆ THỐNG VƯỢT LINK KIẾM COIN", description="Vui lòng bấm vào danh sách bên dưới và **chọn loại link vượt** bạn muốn thực hiện:", color=0x38bdf8)
-    embed.set_footer(text=f"Tác giả: {CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time()}")
+    time_str = get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')
+    embed.set_footer(text=f"to by {CREATOR_NAME} | Vĩnh Phúc, VN • {time_str}")
 
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
     await view.wait()
@@ -260,12 +386,15 @@ async def nhancoin(interaction: discord.Interaction):
     reward_coins = view.earned_coins
 
     api_local_url = "http://127.0.0.1:8080"
+    
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(f"{api_local_url}/save-user", json={"user_id": user_id}) as resp:
-                pass
+            async with session.post(f"{api_local_url}/save-user", json={"user_id": user_id, "service": chosen_service}) as resp:
+                data = await resp.json()
+                if not data.get("success", True):
+                    return await interaction.edit_original_response(content=f"❌ {data.get('message', 'Bạn đã vượt quá giới hạn dịch vụ này trong ngày!')}", embed=None, view=None)
     except Exception as e:
-        print(f"❌ Lỗi gọi /save-user: {e}")
+        print(f"❌ Lỗi kiểm tra giới hạn: {e}")
 
     random_code = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
     url_goc = f"{WEB_GITHUB_URL}?r={random_code}&user={user_id}"
@@ -278,7 +407,7 @@ async def nhancoin(interaction: discord.Interaction):
         f"Bấm vào đường link bên dưới để làm nhiệm vụ:\n"
         f"🔗 **[Bấm vào đây để vượt link]({link_rut_gon})**"
     )
-    result_embed.set_footer(text=f"Tác giả: {CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time()}")
+    result_embed.set_footer(text=f"to by {CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
     
     await interaction.edit_original_response(embed=result_embed, view=None)
 
@@ -286,17 +415,39 @@ async def nhancoin(interaction: discord.Interaction):
         await asyncio.sleep(5)
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(f"{api_local_url}/check-status?user_id={user_id}") as resp:
+                async with session.get(f"{api_local_url}/check-status?user_id={user_id}&service={chosen_service}") as resp:
                     data = await resp.json()
                     if data.get("success"):
                         users_data = read_db()
+                        current_total_coins = 0
                         if user_id in users_data:
-                            users_data[user_id]["coins"] = users_data[user_id].get("coins", 300) - 300 + reward_coins
+                            current_total_coins = users_data[user_id].get("coins", 0) + reward_coins
+                            users_data[user_id]["coins"] = current_total_coins
+                            users_data[user_id]["total_completed"] = users_data[user_id].get("total_completed", 0) + 1
                             write_db(users_data)
-                        await interaction.followup.send(f"🎉 Chúc mừng {interaction.user.mention}! Bạn đã vượt link thành công qua **{chosen_service.upper()}** và nhận được **{reward_coins} Coin**!", ephemeral=True)
+                        
+                        # Gửi thông báo thành công về kênh LOG đã setup theo từng Server
+                        if interaction.guild:
+                            config = read_config()
+                            log_channel_id = config.get(str(interaction.guild.id))
+                            if log_channel_id:
+                                log_channel = bot.get_channel(log_channel_id)
+                                if log_channel:
+                                    log_embed = discord.Embed(
+                                        title="🎉 THÀNH VIÊN VƯỢT LINK THÀNH CÔNG",
+                                        color=discord.Color.green()
+                                    )
+                                    log_embed.add_field(name="👤 Thành viên", value=interaction.user.mention, inline=True)
+                                    log_embed.add_field(name="🛠️ Dịch vụ", value=f"`{chosen_service.upper()}`", inline=True)
+                                    log_embed.add_field(name="🎁 Nhận được", value=f"**+{reward_coins:,}** Coin", inline=True)
+                                    log_embed.add_field(name="💰 Tổng số dư hiện tại", value=f"**{current_total_coins:,}** Coin", inline=False)
+                                    log_embed.set_footer(text=f"to by {CREATOR_NAME} • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
+                                    await log_channel.send(embed=log_embed)
+
+                        await interaction.followup.send(f"🎉 Chúc mừng {interaction.user.mention}! Bạn đã vượt link thành công qua **{chosen_service.upper()}** và nhận được **{reward_coins} Coin**! (Tổng số dư: **{current_total_coins:,}** Coin)", ephemeral=True)
                         return
-        except:
-            pass
+        except Exception as e:
+            print(f"Lỗi check status loop: {e}")
 
     await interaction.followup.send("⏰ Hết thời gian chờ xác thực!", ephemeral=True)
 
@@ -317,7 +468,7 @@ async def sodu(interaction: discord.Interaction):
     embed = discord.Embed(title="💰 THÔNG TIN TÀI KHOẢN", description=f"Thành viên: {interaction.user.mention}", color=discord.Color.green())
     embed.add_field(name="🪙 Số Dư Coin", value=f"**{total_coins:,}** Coin", inline=False)
     embed.add_field(name="🔗 Tổng Lượt Vượt Link", value=f"**{total_completed}** lần", inline=False)
-    embed.set_footer(text=f"Tác giả: {CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time()}")
+    embed.set_footer(text=f"to by {CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -346,10 +497,9 @@ async def topvuotlink(interaction: discord.Interaction):
     else:
         embed.add_field(name="Top Thành Viên", value="\n".join(leaderboard_lines), inline=False)
 
-    embed.set_footer(text=f"Tác giả: {CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time()}")
+    embed.set_footer(text=f"to by {CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
     await interaction.response.send_message(embed=embed)
 
-# Khởi chạy Discord Bot ngầm bằng Thread để Gunicorn quản lý Flask trực tiếp
 def run_bot():
     token = os.getenv('BOT_TOKEN')
     if token:
@@ -358,10 +508,8 @@ def run_bot():
         print("❌ LỖI: Chưa cấu hình biến môi trường BOT_TOKEN!")
 
 if __name__ == '__main__':
-    # Chạy Flask trực tiếp nếu test local
     app.run(host='0.0.0.0', port=8080)
 else:
-    # Khi chạy trên Railway qua Gunicorn, tự động bật Bot ở một luồng riêng biệt
     bot_thread = Thread(target=run_bot)
     bot_thread.daemon = True
     bot_thread.start()
