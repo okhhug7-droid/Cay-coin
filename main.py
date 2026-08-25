@@ -5,7 +5,6 @@ import asyncio
 import random
 import string
 import os
-from datetime import datetime
 from aiohttp import ClientSession
 
 # ================= CẤU HÌNH HỆ THỐNG & API LINK4M =================
@@ -50,10 +49,9 @@ async def nhancoin(interaction: discord.Interaction):
     except Exception as e:
         print(f"❌ Lỗi khi gọi /save-user tới Web Server: {e}")
 
-    # 2. Tạo đường link gốc kèm mã băm ngẫu nhiên và timestamp để Link4m luôn tạo link mới tinh 100%
-    random_path = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
-    timestamp = int(datetime.now().timestamp() * 1000)
-    url_goc = f"{WEB_GITHUB_URL}#/{random_path}?user={user_id}&t={timestamp}"
+    # 2. Tạo mã ngẫu nhiên 'r' để Link4m không bị dính cache và luôn sinh ra link mới tinh trên mọi thiết bị
+    random_code = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+    url_goc = f"{WEB_GITHUB_URL}?r={random_code}&user={user_id}"
 
     # 3. Gọi API Link4m chuẩn theo tài liệu v2 chính thức
     api_link4m = f"https://link4m.co/api-shorten/v2?api={LINK4M_API_TOKEN}&url={url_goc}"
