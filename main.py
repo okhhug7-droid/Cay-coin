@@ -133,8 +133,8 @@ async def nhancoin(interaction: discord.Interaction):
     # 2. Tạo đường link gốc kèm ID ẩn của user
     url_goc = f"{WEB_GITHUB_URL}?user={user_id}"
 
-    # 3. Gọi API Link4m an toàn chống lỗi ContentTypeError
-    api_link4m = f"https://link4m.co/api?api={LINK4M_API_TOKEN}&url={url_goc}"
+    # 3. Gọi API Link4m chuẩn theo tài liệu v2 chính thức
+    api_link4m = f"https://link4m.co/api-shorten/v2?api={LINK4M_API_TOKEN}&url={url_goc}"
     link_rut_gon = url_goc  # Mặc định dùng link gốc nếu có lỗi
     
     try:
@@ -143,7 +143,7 @@ async def nhancoin(interaction: discord.Interaction):
                 if resp.content_type == 'application/json':
                     data = await resp.json()
                     if data.get("status") == "success":
-                        link_rut_gon = data.get("shortened_url")
+                        link_rut_gon = data.get("shortenedUrl") # Đúng theo key của tài liệu Link4m
                 else:
                     text_response = await resp.text()
                     print(f"⚠️ Link4m trả về HTML thay vì JSON: {text_response[:150]}")
