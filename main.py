@@ -505,6 +505,7 @@ def run_bot():
         print("❌ LỖI: Chưa cấu hình biến môi trường BOT_TOKEN!")
 
 if __name__ == '__main__':
+    # Lấy cổng PORT từ Railway cấp phát động để tránh lỗi Stopping Container
     port = int(os.environ.get("PORT", 8080))
     
     bot_thread = Thread(target=run_bot)
