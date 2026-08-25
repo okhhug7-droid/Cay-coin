@@ -3,7 +3,6 @@ from discord import app_commands
 from discord.ext import commands
 from datetime import datetime, timedelta
 import asyncio
-import re
 import random
 import string
 import os
@@ -11,35 +10,35 @@ import json
 from aiohttp import web
 from aiohttp import ClientSession
 
-# ================= CẤU HÌNH HỆ THỐNG =================
+# ================= CẤU HÌNH HỆ TỐNG & API LINK4M =================
 WEB_GITHUB_URL = "https://declatui.github.io/nhan-ma/"
 LINK4M_API_TOKEN = "6a774c5d8c13a0050630ee0b"
 DB_FILE = 'database.json'
 
-# Lấy URL tự động của Railway
-def get_public_url():
-    railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN")
-    if railway_domain:
-        return f"https://{railway_domain}"
-    port = os.environ.get("PORT", "8080")
-    return f"http://127.0.0.1:{port}"
+# URL công khai trên Railway của bạn
+API_RENDER_URL = "https://cay-coin-production.up.railway.app"
 
+# --- Quản lý Database cục bộ (Lưu trạng thái & Số lần vượt link) ---
 def read_db():
-    if not os.path.exists(DB_FILE): return {"users": {}}
+    if not os.path.exists(DB_FILE):
+        return {"users": {}}
     with open(DB_FILE, 'r', encoding='utf-8') as f:
         try:
             data = json.load(f)
-            if "users" not in data: return {"users": data}
+            if "users" not in data:
+                return {"users": data}
             return data
-        except: return {"users": {}}
+        except:
+            return {"users": {}}
 
 def write_db(data):
     with open(DB_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# ================= WEB SERVER API =================
+
+# ================= WEB SERVER API CHO RAILWAY =================
 async def handle_ping(request):
-    return web.Response(text="Bot is running on Railway!")
+    return web.Response(text="Bot is running and alive!")
 
 async def handle_save_user(request):
     try:
@@ -52,32 +51,34 @@ async def handle_save_user(request):
             db["users"][user_id]["status"] = False
         write_db(db)
         return web.json_response({"success": True})
-    except: return web.json_response({"success": False}, status=400)
+    except:
+        return web.json_response({"success": False}, status=400)
 
 async def handle_complete(request):
     user_id = str(request.query.get('user_id'))
     db = read_db()
     if user_id in db["users"]:
         db["users"][user_id]["status"] = True
-        db["users"][user_id]["total_completed"] += 1 
+        db["users"][user_id]["total_completed"] += 1  # Tự động cộng dồn số lần vượt link
         write_db(db)
-        return web.Response(text="<h1>🎉 Vượt link thành công! Bạn hãy quay lại Discord để nhận thưởng.</h1>", content_type='text/html')
+        return web.Response(text="<h1>🎉 Vượt link thành công! Bạn có thể quay lại Discord để nhận thưởng.</h1>", content_type='text/html')
     return web.Response(text="<h1>Link không hợp lệ hoặc đã hết hạn!</h1>", content_type='text/html')
 
 async def handle_check_status(request):
     user_id = str(request.query.get('user_id'))
     db = read_db()
     if user_id in db["users"] and db["users"][user_id]["status"] == True:
-        db["users"][user_id]["status"] = False
+        db["users"][user_id]["status"] = False  # Reset trạng thái chờ để lần sau làm tiếp
         write_db(db)
         return web.json_response({"success": True})
     return web.json_response({"success": False})
 
 async def handle_reset_daily(request):
     db = read_db()
-    for uid in db["users"]: db["users"][uid]["status"] = False
+    for uid in db["users"]:
+        db["users"][uid]["status"] = False
     write_db(db)
-    return web.json_response({"success": True})
+    return web.json_response({"success": True, "message": "Đã reset trạng thái ngày mới!"})
 
 async def start_web_server():
     app = web.Application()
@@ -90,11 +91,11 @@ async def start_web_server():
     runner = web.AppRunner(app)
     await runner.setup()
     
-    # Rất quan trọng: Phải lấy PORT từ biến môi trường của Railway
     port = int(os.environ.get("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     print(f"🌐 Web Server API đã mở thành công trên cổng {port}!")
+
 
 # ================= CẤU HÌNH BOT DISCORD =================
 intents = discord.Intents.default()
@@ -112,25 +113,30 @@ class MyBot(commands.Bot):
     async def setup_hook(self):
         asyncio.create_task(start_web_server())
         await self.tree.sync()
-        print("✅ Đã đồng bộ Slash Commands và khởi động Bot thành công!")
+        print("Đã đồng bộ Slash Commands và khởi động Bot thành công!")
 
 bot = MyBot()
 
 @bot.event
 async def on_ready():
-    print(f'🤖 Bot đã đăng nhập thành công với tên: {bot.user}')
+    print(f'Bot đã đăng nhập thành công với tên: {bot.user}')
 
-@bot.tree.command(name="nhancoin", description="Tạo link vượt mã tự động để nhận coin")
+
+# ================= SLASH COMMAND: NHẬN COIN QUA LINK4M =================
+@bot.tree.command(name="nhancoin", description="Tạo link vượt mã tự động qua Link4m để nhận coin")
 async def nhancoin(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
     await interaction.response.defer(ephemeral=True)
 
-    base_url = get_public_url()
-
+    # 1. Báo lên server Railway lưu trạng thái chờ của user
     async with ClientSession() as session:
-        await session.post(f"{base_url}/save-user", json={"user_id": user_id})
+        async with session.post(f"{API_RENDER_URL}/save-user", json={"user_id": user_id}) as resp:
+            pass
 
+    # 2. Tạo đường link gốc kèm ID ẩn của user
     url_goc = f"{WEB_GITHUB_URL}?user={user_id}"
+
+    # 3. Gọi API Link4m để tự động tạo link rút gọn
     api_link4m = f"https://link4m.co/api?api={LINK4M_API_TOKEN}&url={url_goc}"
     link_rut_gon = url_goc 
     
@@ -140,28 +146,62 @@ async def nhancoin(interaction: discord.Interaction):
             if data.get("status") == "success":
                 link_rut_gon = data.get("shortened_url")
 
-    embed = discord.Embed(title="🪙 Nhận Coin Tự Động", color=discord.Color.brand_green())
-    embed.description = f"🔗 **[Bấm vào đây để vượt link]({link_rut_gon})**\n\n*(Sau khi hoàn thành, bot sẽ tự động cộng coin cho bạn!)*"
+    # 4. Gửi link cho người dùng
+    embed = discord.Embed(title="🪙 Hệ Thống Nhận Coin Tự Động", color=0x38bdf8)
+    embed.description = f"Bấm vào đường link bên dưới để làm nhiệm vụ:\n🔗 **[Bấm vào đây để vượt link]({link_rut_gon})**\n\n*(Sau khi vượt link thành công, hệ thống sẽ tự động cộng coin cho bạn ngay lập tức!)*"
+    
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-    # Đợi 5 phút để check trạng thái
+    # 5. Bot tự động đứng ngầm đợi người dùng hoàn thành (tối đa 5 phút)
     for _ in range(60):
         await asyncio.sleep(5)
         async with ClientSession() as session:
-            try:
-                async with session.get(f"{base_url}/check-status?user_id={user_id}") as resp:
-                    data = await resp.json()
-                    if data.get("success"):
-                        await interaction.followup.send(f"🎉 Chúc mừng {interaction.user.mention}! Bạn đã vượt link thành công và nhận được **100 Coin**!", ephemeral=True)
-                        return
-            except Exception as e:
-                pass
+            async with session.get(f"{API_RENDER_URL}/check-status?user_id={user_id}") as resp:
+                data = await resp.json()
+                if data.get("success"):
+                    # === HOÀN TẤT: CỘNG COIN CHO USER TẠI ĐÂY ===
+                    await interaction.followup.send(f"🎉 Chúc mừng {interaction.user.mention}! Bạn đã vượt link thành công và nhận được **100 Coin**!", ephemeral=True)
+                    return
 
-    await interaction.followup.send("⏰ Hết thời gian chờ xác thực! Hãy thử lại lệnh nhé.", ephemeral=True)
+    await interaction.followup.send("⏰ Hết thời gian chờ xác thực! Bạn hãy dùng lại lệnh `/nhancoin` nếu muốn thử lại.", ephemeral=True)
 
-# Khởi chạy Bot
+
+# ================= LỆNH XEM TOP VƯỢT LINK =================
+@bot.tree.command(name="topvuotlink", description="Xem bảng xếp hạng top đầu vượt link nhiều nhất")
+async def topvuotlink(interaction: discord.Interaction):
+    db = read_db()
+    users_data = db.get("users", {})
+    if not users_data:
+        return await interaction.response.send_message("📊 Chưa có dữ liệu bảng xếp hạng!", ephemeral=True)
+
+    sorted_users = sorted(users_data.items(), key=lambda x: x[1].get("total_completed", 0), reverse=True)
+    
+    embed = discord.Embed(
+        title="🏆 BẢNG XẾP HẠNG VƯỢT LINK",
+        description="Dưới đây là danh sách những thành viên chăm chỉ nhất:",
+        color=discord.Color.gold()
+    )
+    
+    medal_emojis = ["🥇", "🥈", "🥉"]
+    leaderboard_lines = []
+
+    for idx, (user_id, info) in enumerate(sorted_users[:10]):
+        total = info.get("total_completed", 0)
+        if total == 0: continue
+        rank_display = medal_emojis[idx] if idx < 3 else f"`#{idx+1:02d}`"
+        leaderboard_lines.append(f"{rank_display} | <@{user_id}> ➔ **{total}** lần")
+
+    if not leaderboard_lines:
+        embed.description = "Chưa có thành viên nào hoàn thành lượt vượt link nào."
+    else:
+        embed.add_field(name="Top Thành Viên", value="\n".join(leaderboard_lines), inline=False)
+
+    await interaction.response.send_message(embed=embed)
+
+
+# ================= KHỞI CHẠY BOT =================
 token = os.getenv('BOT_TOKEN')
 if not token:
-    print("❌ LỖI NGHIÊM TRỌNG: Chưa cấu hình biến môi trường BOT_TOKEN trong phần Variables của Railway!")
+    print("❌ LỖI NGHIÊM TRỌNG: Chưa cấu hình biến môi trường BOT_TOKEN!")
 else:
     bot.run(token)
