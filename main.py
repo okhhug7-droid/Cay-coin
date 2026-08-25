@@ -17,82 +17,82 @@ from threading import Thread
 WEB_GITHUB_URL = "https://declatui.github.io/nhan-ma/"
 DB_FILE = 'database.json'
 CREATOR_NAME = "to by ph.huyy"
-CONFIG_FILE = 'config.json'  # File lưu cấu hình kênh thông báo theo server
+CONFIG_FILE = 'config.json'
 
-# Giới hạn số lần làm mỗi ngày cho từng dịch vụ theo yêu cầu
+# Giới hạn số lần làm mỗi ngày cho từng dịch vụ đã cập nhật theo yêu cầu mới nhất
 DAILY_LIMITS = {
-    "phienchoso_review": 2,       # Review: 2 nhiệm vụ
-    "taskdaily_review_map": 3,    # Taskdaily: 3 nhiệm vụ
-    "taskdaily_organic": 3,       # Taskdaily: 3 nhiệm vụ
-    "taskdaily_backlink": 3,      # Taskdaily: 3 nhiệm vụ
-    "uptolink4": 100,             # Uptolink: 100 nhiệm vụ
-    "bbmkts": 1,                  # Bbmkts: 1 nhiệm vụ
-    "phienchoso_tukhoa": 2,       # Phienchoso từ khóa: 2 nhiệm vụ
-    "trafficfucser": 2,           # Gtraffic / Trafficfucser: 2 nhiệm vụ
-    "traffichub": 3,              # Traffichub: 3 nhiệm vụ
-    "site2s": 2,                  # Site2s: 2 nhiệm vụ
-    "lentop": 1,                  # Lentop: 1 nhiệm vụ
-    "linktop": 1,                 # Linktop: 1 nhiệm vụ
-    "link4m": 2                   # Link4m: 2 nhiệm vụ
+    "octolink": 150,              # Octolink: 150 lần[cite: 3]
+    "link4m": 2,                  # Link4m: 2 lần[cite: 3]
+    "bbmkts": 1,                  # bbmkts: 1 lần[cite: 3]
+    "phienchoso_review": 2,       # Phienchoso review: 2 lần[cite: 3]
+    "phienchoso_tukhoa": 2,       # Phienchoso từ khóa: 2 lần[cite: 3]
+    "linktop": 1,                 # Linktop: 1 lần[cite: 3]
+    "site2s": 2,                  # Site2s: 2 lần[cite: 3]
+    "taskdaily_review_map": 2,    # Taskdaily review: 2 lần[cite: 3]
+    "taskdaily_organic": 3,       # Organic: 3 lần[cite: 3]
+    "taskdaily_backlink": 3,      # Backlink: 3 lần[cite: 3]
+    "traffichub": 2,              # Traffic hub: 2 lần[cite: 3]
+    "lentop": 1,                  # Lentop: 1 lần[cite: 3]
+    "trafficfucser": 2,           # Graffitic (Trafficfucser): 2 lần[cite: 3]
 }
 
 API_CONFIGS = {
+    "octolink": {
+        "url": "https://octolink.vip/api?api=1617ae1eea0cf96a7f9312494a10b35507b65e3f&url=",[cite: 3]
+        "method": "GET"
+    },
+    "link4m": {
+        "url": "https://link4m.co/api-shorten/v2?api=6a714550eb578b3aa004e7e9&url=",[cite: 3]
+        "method": "GET"
+    },
+    "bbmkts": {
+        "url": "https://bbmkts.com/dapi?token=ebb7e38aa5335a1ef5458ea4&longurl=",[cite: 3]
+        "method": "GET"
+    },
     "phienchoso_review": {
-        "url": "https://phienchoso.com/api_task/review.php?token=28d1d7e7fbcb906353d1ecc2526a14a925068702b5db705e6e9bce2f5f7c02dc&url=",
+        "url": "https://phienchoso.com/api_task/review.php?token=28d1d7e7fbcb906353d1ecc2526a14a925068702b5db705e6e9bce2f5f7c02dc&url=",[cite: 3]
+        "method": "GET"
+    },
+    "phienchoso_tukhoa": {
+        "url": "https://phienchoso.com/api_task/tukhoa.php?token=28d1d7e7fbcb906353d1ecc2526a14a925068702b5db705e6e9bce2f5f7c02dc&url=",[cite: 3]
+        "method": "GET"
+    },
+    "linktop": {
+        "url": "https://linktop.one/api?api=VLieiZQCt3raHn6kPmH2Xr9BNJoF5UFCBPCk8p6KPY5Dcl&url=",[cite: 3]
+        "method": "GET"
+    },
+    "site2s": {
+        "url": "https://site2s.com/api?api=e3f7546b1e04f72ab26d66b715b65f10d7eaf5e7&url=",[cite: 3]
         "method": "GET"
     },
     "taskdaily_review_map": {
         "url": "https://taskdaily.app/api/v1/shortlink",
         "method": "POST",
         "task_type": "review",
-        "headers": {'X-API-Key': 'tdl_4UHkzF6LRfse7D6ZYsgFtzQJC73nWmvy', 'Content-Type': 'application/json'}
+        "headers": {'X-API-Key': 'tdl_4UHkzF6LRfse7D6ZYsgFtzQJC73nWmvy', 'Content-Type': 'application/json'}[cite: 3]
     },
     "taskdaily_organic": {
         "url": "https://taskdaily.app/api/v1/shortlink",
         "method": "POST",
         "task_type": "organic",
-        "headers": {'X-API-Key': 'tdl_4UHkzF6LRfse7D6ZYsgFtzQJC73nWmvy', 'Content-Type': 'application/json'}
-    },
-    "uptolink4": {
-        "url": "https://link4m.co/api-shorten/v2?api=6a714550eb578b3aa004e7e9&url=",
-        "method": "GET"
-    },
-    "bbmkts": {
-        "url": "https://bbmkts.com/dapi?token=ebb7e38aa5335a1ef5458ea4&longurl=",
-        "method": "GET"
-    },
-    "phienchoso_tukhoa": {
-        "url": "https://phienchoso.com/api_task/tukhoa.php?token=28d1d7e7fbcb906353d1ecc2526a14a925068702b5db705e6e9bce2f5f7c02dc&url=",
-        "method": "GET"
+        "headers": {'X-API-Key': 'tdl_4UHkzF6LRfse7D6ZYsgFtzQJC73nWmvy', 'Content-Type': 'application/json'}[cite: 3]
     },
     "taskdaily_backlink": {
         "url": "https://taskdaily.app/api/v1/shortlink",
         "method": "POST",
         "task_type": "backlink",
-        "headers": {'X-API-Key': 'tdl_4UHkzF6LRfse7D6ZYsgFtzQJC73nWmvy', 'Content-Type': 'application/json'}
-    },
-    "trafficfucser": {
-        "url": "https://manager.gtraffic.io/api/cong-khai/tao-lien-ket?apikey=06f3d31cb9a84e998e2318b1aaee8b33&url=",
-        "method": "GET"
+        "headers": {'X-API-Key': 'tdl_4UHkzF6LRfse7D6ZYsgFtzQJC73nWmvy', 'Content-Type': 'application/json'}[cite: 3]
     },
     "traffichub": {
-        "url": "https://system.traffichub.vn/api/api?api_key=48a81726d5068fd1b64b0a9fb60c364c&type=code&code=GIFT-2026",
-        "method": "GET"
-    },
-    "site2s": {
-        "url": "https://site2s.com/api?api=e3f7546b1e04f72ab26d66b715b65f10d7eaf5e7&url=",
+        "url": "https://system.traffichub.vn/api/api?api_key=48a81726d5068fd1b64b0a9fb60c364c&type=code&code=GIFT-2026",[cite: 3]
         "method": "GET"
     },
     "lentop": {
-        "url": "https://lentop.one/api?api=wj3WIDMxyNAwnGO6UJo35tdP&url=",
+        "url": "https://lentop.one/api?api=wj3WIDMxyNAwnGO6UJo35tdP&url=",[cite: 3]
         "method": "GET"
     },
-    "linktop": {
-        "url": "https://linktop.one/api?api=VLieiZQCt3raHn6kPmH2Xr9BNJoF5UFCBPCk8p6KPY5Dcl&url=",
-        "method": "GET"
-    },
-    "link4m": {
-        "url": "https://link4m.co/api-shorten/v2?api=6a714550eb578b3aa004e7e9&url=",
+    "trafficfucser": {
+        "url": "https://manager.gtraffic.io/api/cong-khai/tao-lien-ket?apikey=06f3d31cb9a84e998e2318b1aaee8b33&url=",[cite: 3]
         "method": "GET"
     }
 }
@@ -320,19 +320,19 @@ class LinkSelectDropdown(discord.ui.Select):
 
         custom_emoji = discord.PartialEmoji.from_str("<a:emoji_45:1541782094714511400>")
         options = [
+            discord.SelectOption(label="Octolink", description="+450 VNĐ (~450 Coin)", emoji=custom_emoji, value="octolink"),
+            discord.SelectOption(label="Link4m", description="+370 VNĐ (~370 Coin)", emoji=custom_emoji, value="link4m"),
+            discord.SelectOption(label="Bbmkts", description="+450 VNĐ (~450 Coin)", emoji=custom_emoji, value="bbmkts"),
             discord.SelectOption(label="Phienchoso Review", description="+1,000 VNĐ (~1,000 Coin)", emoji=custom_emoji, value="phienchoso_review"),
+            discord.SelectOption(label="Phienchoso Tu Khoa", description="+380 VNĐ (~380 Coin)", emoji=custom_emoji, value="phienchoso_tukhoa"),
+            discord.SelectOption(label="Linktop", description="+250 VNĐ (~250 Coin)", emoji=custom_emoji, value="linktop"),
+            discord.SelectOption(label="Site2s", description="+250 VNĐ (~250 Coin)", emoji=custom_emoji, value="site2s"),
             discord.SelectOption(label="Taskdaily Review Map", description="+1,000 VNĐ (~1,000 Coin)", emoji=custom_emoji, value="taskdaily_review_map"),
             discord.SelectOption(label="Taskdaily Organic", description="+350 VNĐ (~350 Coin)", emoji=custom_emoji, value="taskdaily_organic"),
-            discord.SelectOption(label="Uptolink 4", description="+450 VNĐ (~450 Coin)", emoji=custom_emoji, value="uptolink4"),
-            discord.SelectOption(label="Bbmkts", description="+450 VNĐ (~450 Coin)", emoji=custom_emoji, value="bbmkts"),
-            discord.SelectOption(label="Phienchoso Tu Khoa", description="+380 VNĐ (~380 Coin)", emoji=custom_emoji, value="phienchoso_tukhoa"),
             discord.SelectOption(label="Taskdaily Backlink", description="+300 VNĐ (~300 Coin)", emoji=custom_emoji, value="taskdaily_backlink"),
-            discord.SelectOption(label="Trafficfucser", description="+200 VNĐ (~200 Coin)", emoji=custom_emoji, value="trafficfucser"),
             discord.SelectOption(label="TrafficHub", description="+300 VNĐ (~300 Coin)", emoji=custom_emoji, value="traffichub"),
-            discord.SelectOption(label="Site2s", description="+250 VNĐ (~250 Coin)", emoji=custom_emoji, value="site2s"),
             discord.SelectOption(label="Lentop", description="+300 VNĐ (~300 Coin)", emoji=custom_emoji, value="lentop"),
-            discord.SelectOption(label="Linktop", description="+250 VNĐ (~250 Coin)", emoji=custom_emoji, value="linktop"),
-            discord.SelectOption(label="Link4m", description="+370 VNĐ (~370 Coin)", emoji=custom_emoji, value="link4m"),
+            discord.SelectOption(label="Trafficfucser", description="+200 VNĐ (~200 Coin)", emoji=custom_emoji, value="trafficfucser"),
         ]
         super().__init__(placeholder="Chọn loại link vượt kiếm tiền...", min_values=1, max_values=1, options=options)
 
@@ -342,10 +342,10 @@ class LinkSelectDropdown(discord.ui.Select):
         
         self.selected_service = self.values[0]
         coin_mapping = {
-            "phienchoso_review": 1000, "taskdaily_review_map": 1000, "taskdaily_organic": 350,
-            "uptolink4": 450, "bbmkts": 450, "phienchoso_tukhoa": 380, "taskdaily_backlink": 300,
-            "trafficfucser": 200, "traffichub": 300, "site2s": 250,
-            "lentop": 300, "linktop": 250, "link4m": 370
+            "octolink": 450, "link4m": 370, "bbmkts": 450,
+            "phienchoso_review": 1000, "phienchoso_tukhoa": 380, "linktop": 250,
+            "site2s": 250, "taskdaily_review_map": 1000, "taskdaily_organic": 350,
+            "taskdaily_backlink": 300, "traffichub": 300, "lentop": 300, "trafficfucser": 200
         }
         self.earned_coins = coin_mapping.get(self.selected_service, 300)
         self.view.stop()
@@ -505,7 +505,6 @@ def run_bot():
         print("❌ LỖI: Chưa cấu hình biến môi trường BOT_TOKEN!")
 
 if __name__ == '__main__':
-    # Lấy cổng PORT từ Railway cấp phát động để tránh lỗi Stopping Container
     port = int(os.environ.get("PORT", 8080))
     
     bot_thread = Thread(target=run_bot)
