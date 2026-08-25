@@ -16,8 +16,8 @@ from threading import Thread
 # ================= CẤU HÌNH HỆ THỐNG & API RÚT GỌN =================
 WEB_GITHUB_URL = "https://declatui.github.io/nhan-ma/"
 DB_FILE = 'database.json'
-CREATOR_NAME = "ph.huyy"
-CONFIG_FILE = 'config.json'  # File lưu cấu hình kênh thông báo
+CREATOR_NAME = "to by ph.huyy"
+CONFIG_FILE = 'config.json'  # File lưu cấu hình kênh thông báo theo server
 
 # Giới hạn số lần làm mỗi ngày cho từng dịch vụ theo yêu cầu
 DAILY_LIMITS = {
@@ -258,7 +258,6 @@ async def shorten_with_api(service_name, destination_url):
 class ChannelSelectDropdown(discord.ui.Select):
     def __init__(self, guild):
         self.guild = guild
-        # Lọc lấy các kênh văn bản trong server (tối đa 25 kênh do giới hạn Discord)
         text_channels = [ch for ch in guild.text_channels][:25]
         
         options = []
@@ -281,7 +280,6 @@ class ChannelSelectDropdown(discord.ui.Select):
         channel_id = int(self.values[0])
         guild_id = str(self.guild.id)
         
-        # Lưu vào file cấu hình
         config = read_config()
         config[guild_id] = channel_id
         write_config(config)
@@ -303,7 +301,7 @@ async def setupkenh(interaction: discord.Interaction):
         description="Vui lòng chọn kênh bên dưới từ danh sách để làm nơi gửi thông báo khi có thành viên vượt link thành công:",
         color=0x38bdf8
     )
-    embed.set_footer(text=f"to by {CREATOR_NAME} | Vĩnh Phúc, VN")
+    embed.set_footer(text=f"{CREATOR_NAME} | Vĩnh Phúc, VN")
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 @setupkenh.error
@@ -374,7 +372,7 @@ async def nhancoin(interaction: discord.Interaction):
     
     embed = discord.Embed(title="🪙 HỆ THỐNG VƯỢT LINK KIẾM COIN", description="Vui lòng bấm vào danh sách bên dưới và **chọn loại link vượt** bạn muốn thực hiện:", color=0x38bdf8)
     time_str = get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')
-    embed.set_footer(text=f"to by {CREATOR_NAME} | Vĩnh Phúc, VN • {time_str}")
+    embed.set_footer(text=f"{CREATOR_NAME} | Vĩnh Phúc, VN • {time_str}")
 
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
     await view.wait()
@@ -407,7 +405,7 @@ async def nhancoin(interaction: discord.Interaction):
         f"Bấm vào đường link bên dưới để làm nhiệm vụ:\n"
         f"🔗 **[Bấm vào đây để vượt link]({link_rut_gon})**"
     )
-    result_embed.set_footer(text=f"to by {CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
+    result_embed.set_footer(text=f"{CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
     
     await interaction.edit_original_response(embed=result_embed, view=None)
 
@@ -426,7 +424,6 @@ async def nhancoin(interaction: discord.Interaction):
                             users_data[user_id]["total_completed"] = users_data[user_id].get("total_completed", 0) + 1
                             write_db(users_data)
                         
-                        # Gửi thông báo thành công về kênh LOG đã setup theo từng Server
                         if interaction.guild:
                             config = read_config()
                             log_channel_id = config.get(str(interaction.guild.id))
@@ -441,7 +438,7 @@ async def nhancoin(interaction: discord.Interaction):
                                     log_embed.add_field(name="🛠️ Dịch vụ", value=f"`{chosen_service.upper()}`", inline=True)
                                     log_embed.add_field(name="🎁 Nhận được", value=f"**+{reward_coins:,}** Coin", inline=True)
                                     log_embed.add_field(name="💰 Tổng số dư hiện tại", value=f"**{current_total_coins:,}** Coin", inline=False)
-                                    log_embed.set_footer(text=f"to by {CREATOR_NAME} • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
+                                    log_embed.set_footer(text=f"{CREATOR_NAME} • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
                                     await log_channel.send(embed=log_embed)
 
                         await interaction.followup.send(f"🎉 Chúc mừng {interaction.user.mention}! Bạn đã vượt link thành công qua **{chosen_service.upper()}** và nhận được **{reward_coins} Coin**! (Tổng số dư: **{current_total_coins:,}** Coin)", ephemeral=True)
@@ -468,7 +465,7 @@ async def sodu(interaction: discord.Interaction):
     embed = discord.Embed(title="💰 THÔNG TIN TÀI KHOẢN", description=f"Thành viên: {interaction.user.mention}", color=discord.Color.green())
     embed.add_field(name="🪙 Số Dư Coin", value=f"**{total_coins:,}** Coin", inline=False)
     embed.add_field(name="🔗 Tổng Lượt Vượt Link", value=f"**{total_completed}** lần", inline=False)
-    embed.set_footer(text=f"to by {CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
+    embed.set_footer(text=f"{CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -497,7 +494,7 @@ async def topvuotlink(interaction: discord.Interaction):
     else:
         embed.add_field(name="Top Thành Viên", value="\n".join(leaderboard_lines), inline=False)
 
-    embed.set_footer(text=f"to by {CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
+    embed.set_footer(text=f"{CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
     await interaction.response.send_message(embed=embed)
 
 def run_bot():
@@ -508,9 +505,11 @@ def run_bot():
         print("❌ LỖI: Chưa cấu hình biến môi trường BOT_TOKEN!")
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)
-else:
+    port = int(os.environ.get("PORT", 8080))
+    
     bot_thread = Thread(target=run_bot)
     bot_thread.daemon = True
     bot_thread.start()
     print("🤖 Discord Bot đã được kích hoạt chạy ngầm trên Cloud!")
+
+    app.run(host='0.0.0.0', port=port)
