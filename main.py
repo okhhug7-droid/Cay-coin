@@ -1,4 +1,4 @@
-import discord
+   import discord
 from discord import app_commands
 from discord.ext import commands
 from datetime import datetime, timedelta
@@ -130,8 +130,9 @@ async def nhancoin(interaction: discord.Interaction):
         async with session.post(f"{API_RENDER_URL}/save-user", json={"user_id": user_id}) as resp:
             pass
 
-    # 2. Tạo đường link gốc kèm ID ẩn của user
-    url_goc = f"{WEB_GITHUB_URL}?user={user_id}"
+    # 2. Tạo đường link gốc kèm ID và chuỗi ngẫu nhiên giúp Link4m luôn sinh link mới tinh
+    random_code = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+    url_goc = f"{WEB_GITHUB_URL}?user={user_id}&ref={random_code}"
 
     # 3. Gọi API Link4m chuẩn theo tài liệu v2 chính thức
     api_link4m = f"https://link4m.co/api-shorten/v2?api={LINK4M_API_TOKEN}&url={url_goc}"
@@ -143,7 +144,7 @@ async def nhancoin(interaction: discord.Interaction):
                 if resp.content_type == 'application/json':
                     data = await resp.json()
                     if data.get("status") == "success":
-                        link_rut_gon = data.get("shortenedUrl") # Đúng theo key của tài liệu Link4m
+                        link_rut_gon = data.get("shortenedUrl")
                 else:
                     text_response = await resp.text()
                     print(f"⚠️ Link4m trả về HTML thay vì JSON: {text_response[:150]}")
