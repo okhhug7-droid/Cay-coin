@@ -10,7 +10,7 @@ import json
 from aiohttp import web
 from aiohttp import ClientSession
 
-# ================= CẤU HÌNH HỆ TỐNG & API LINK4M =================
+# ================= CẤU HÌNH HỆ THỐNG & API LINK4M =================
 WEB_GITHUB_URL = "https://declatui.github.io/nhan-ma/"
 LINK4M_API_TOKEN = "6a774c5d8c13a0050630ee0b"
 DB_FILE = 'database.json'
@@ -106,9 +106,6 @@ intents.message_content = True
 class MyBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix=":", intents=intents)
-        self.TARGET_EMOJI_GUILD_ID = 1503922700408586240
-        self.server_configs = {}
-        self.birthdays = {}
 
     async def setup_hook(self):
         asyncio.create_task(start_web_server())
@@ -136,15 +133,22 @@ async def nhancoin(interaction: discord.Interaction):
     # 2. Tạo đường link gốc kèm ID ẩn của user
     url_goc = f"{WEB_GITHUB_URL}?user={user_id}"
 
-    # 3. Gọi API Link4m để tự động tạo link rút gọn
+    # 3. Gọi API Link4m an toàn chống lỗi ContentTypeError
     api_link4m = f"https://link4m.co/api?api={LINK4M_API_TOKEN}&url={url_goc}"
-    link_rut_gon = url_goc 
+    link_rut_gon = url_goc  # Mặc định dùng link gốc nếu có lỗi
     
-    async with ClientSession() as session:
-        async with session.get(api_link4m) as resp:
-            data = await resp.json()
-            if data.get("status") == "success":
-                link_rut_gon = data.get("shortened_url")
+    try:
+        async with ClientSession() as session:
+            async with session.get(api_link4m) as resp:
+                if resp.content_type == 'application/json':
+                    data = await resp.json()
+                    if data.get("status") == "success":
+                        link_rut_gon = data.get("shortened_url")
+                else:
+                    text_response = await resp.text()
+                    print(f"⚠️ Link4m trả về HTML thay vì JSON: {text_response[:150]}")
+    except Exception as e:
+        print(f"❌ Lỗi khi gọi API Link4m: {e}")
 
     # 4. Gửi link cho người dùng
     embed = discord.Embed(title="🪙 Hệ Thống Nhận Coin Tự Động", color=0x38bdf8)
