@@ -19,21 +19,21 @@ DB_FILE = 'database.json'
 CREATOR_NAME = "to by ph.huyy"
 CONFIG_FILE = 'config.json'
 
-# Giới hạn số lần làm mỗi ngày cho từng dịch vụ đã cập nhật theo yêu cầu mới nhất
+# Giới hạn số lần làm mỗi ngày cho từng dịch vụ
 DAILY_LIMITS = {
-    "octolink": 150,              # Octolink: 150 lần
-    "link4m": 2,                  # Link4m: 2 lần
-    "bbmkts": 1,                  # bbmkts: 1 lần
-    "phienchoso_review": 2,       # Phienchoso review: 2 lần
-    "phienchoso_tukhoa": 2,       # Phienchoso từ khóa: 2 lần
-    "linktop": 1,                 # Linktop: 1 lần
-    "site2s": 2,                  # Site2s: 2 lần
-    "taskdaily_review_map": 2,    # Taskdaily review: 2 lần
-    "taskdaily_organic": 3,       # Organic: 3 lần
-    "taskdaily_backlink": 3,      # Backlink: 3 lần
-    "traffichub": 2,              # Traffic hub: 2 lần
-    "lentop": 1,                  # Lentop: 1 lần
-    "trafficfucser": 2,           # Graffitic (Trafficfucser): 2 lần
+    "octolink": 150,              
+    "link4m": 2,                  
+    "bbmkts": 1,                  
+    "phienchoso_review": 2,       
+    "phienchoso_tukhoa": 2,       
+    "linktop": 1,                 
+    "site2s": 2,                  
+    "taskdaily_review_map": 2,    
+    "taskdaily_organic": 3,       
+    "taskdaily_backlink": 3,      
+    "traffichub": 2,              
+    "lentop": 1,                  
+    "trafficfucser": 2,           
 }
 
 API_CONFIGS = {
@@ -235,9 +235,15 @@ async def shorten_with_api(service_name, destination_url):
             if config["method"] == "GET":
                 api_url = config["url"] + destination_url
                 async with session.get(api_url) as resp:
-                    if resp.content_type == 'application/json':
+                    if 'application/json' in resp.headers.get('Content-Type', ''):
                         data = await resp.json()
-                        short_link = data.get("shortenedUrl") or data.get("url") or data.get("link")
+                        short_link = (
+                            data.get("shortenedUrl") or 
+                            data.get("url") or 
+                            data.get("link") or 
+                            data.get("short_url") or
+                            (data.get("data") and isinstance(data.get("data"), dict) and data["data"].get("url"))
+                        )
                         if short_link and short_link.startswith("http") and destination_url not in short_link:
                             return short_link.strip()
                     else:
@@ -246,9 +252,15 @@ async def shorten_with_api(service_name, destination_url):
                             return text_res.strip()
             elif config["method"] == "POST":
                 async with session.post(config["url"], headers=config["headers"], json={"url": destination_url, "taskType": config.get("task_type", "review")}) as resp:
-                    if resp.content_type == 'application/json':
+                    if 'application/json' in resp.headers.get('Content-Type', ''):
                         data = await resp.json()
-                        short_link = data.get("shortenedUrl") or data.get("url")
+                        short_link = (
+                            data.get("shortenedUrl") or 
+                            data.get("url") or 
+                            data.get("link") or 
+                            data.get("short_url") or
+                            (data.get("data") and isinstance(data.get("data"), dict) and data["data"].get("url"))
+                        )
                         if short_link and short_link.startswith("http") and destination_url not in short_link:
                             return short_link.strip()
         except Exception as e:
