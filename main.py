@@ -6,6 +6,7 @@ import random
 import string
 import os
 import json
+import re
 import urllib.parse
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -228,89 +229,164 @@ async def on_ready():
     print(f'Bot đã đăng nhập thành công với tên: {bot.user} (Vĩnh Phúc, VN)')
 
 async def shorten_with_api(service_name, destination_url):
+    """
+    Gọi API rút gọn link theo từng dịch vụ và xử lý nhiều kiểu response khác nhau.
+    Link4m vẫn giữ cách gọi cũ; các API khác được xử lý linh hoạt hơn.
+    """
     config = API_CONFIGS.get(service_name)
     if not config:
+        print(f"❌ Không tìm thấy cấu hình API: {service_name}")
         return None
 
-    async with aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(total=30)
+
+    def find_short_url(obj):
+        """Tìm URL rút gọn kể cả khi API trả JSON lồng nhiều tầng."""
+        if isinstance(obj, str):
+            value = obj.strip().replace("\\/", "/")
+            if value.startswith(("http://", "https://")):
+                return value
+            # Một số API có thể trả URL nằm trong chuỗi.
+            match = re.search(r'https?://[^\s"<>]+', value)
+            if match:
+                return match.group(0).rstrip(".,)")
+            return None
+
+        if isinstance(obj, dict):
+            # Ưu tiên các tên trường thường dùng của shortener.
+            preferred = (
+                "shortenedUrl", "shortened_url", "shorturl", "short_url",
+                "shortUrl", "short", "link", "url", "result", "message",
+                "destination"
+            )
+            for key in preferred:
+                if key in obj:
+                    found = find_short_url(obj[key])
+                    if found:
+                        return found
+
+            # Tìm sâu trong các object/list còn lại.
+            for value in obj.values():
+                found = find_short_url(value)
+                if found:
+                    return found
+
+        elif isinstance(obj, list):
+            for item in obj:
+                found = find_short_url(item)
+                if found:
+                    return found
+
+        return None
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
-            if config["method"] == "GET":
-                base_url = config["url"]
-                encoded_url = urllib.parse.quote(destination_url)
-                
+            method = config.get("method", "GET").upper()
+            headers = config.get("headers", {})
+            base_url = config["url"]
+
+            if method == "GET":
+                # Có thể cấu hình tên tham số riêng cho từng API.
+                # Giữ tương thích với cấu hình cũ.
                 if "bbmkts.com" in base_url:
-                    api_url = f"{base_url}&longurl={encoded_url}"
+                    param_name = config.get("url_param", "longurl")
                 elif "traffichub.vn" in base_url:
-                    api_url = f"{base_url}&sub_link={encoded_url}"
+                    param_name = config.get("url_param", "sub_link")
                 else:
-                    separator = "&" if "?" in base_url else "?"
-                    api_url = f"{base_url}{separator}url={encoded_url}"
+                    param_name = config.get("url_param", "url")
 
-                async with session.get(api_url) as resp:
+                # Dùng aiohttp params thay vì tự nối chuỗi để tránh lỗi encode URL.
+                async with session.get(
+                    base_url,
+                    params={param_name: destination_url},
+                    headers=headers
+                ) as resp:
                     text_res = await resp.text()
-                    text_res_clean = text_res.strip()
-                    print(f"🔍 DEBUG [{service_name}] Status: {resp.status} | Response: {text_res_clean[:300]}")
+                    text_clean = text_res.strip()
 
-                    if text_res_clean.startswith("http://") or text_res_clean.startswith("https://"):
-                        return text_res_clean.replace("\\/", "/")
+                    print(
+                        f"🔍 DEBUG [{service_name}] "
+                        f"Status: {resp.status} | "
+                        f"Content-Type: {resp.headers.get('Content-Type', '')} | "
+                        f"Response: {text_clean[:500]}"
+                    )
+
+                    # Một số API trả link qua HTTP redirect.
+                    location = resp.headers.get("Location")
+                    if location and location.startswith(("http://", "https://")):
+                        return location
+
+                    # API trả thẳng URL.
+                    direct = find_short_url(text_clean)
+                    if direct:
+                        return direct
+
+                    # API trả JSON.
+                    try:
+                        data = json.loads(text_clean)
+                        found = find_short_url(data)
+                        if found:
+                            return found
+                    except json.JSONDecodeError:
+                        pass
+
+                    print(
+                        f"⚠️ [{service_name}] API không trả về URL rút gọn hợp lệ."
+                    )
+
+            elif method == "POST":
+                payload = {
+                    "url": destination_url,
+                    "taskType": config.get("task_type", "review")
+                }
+
+                async with session.post(
+                    base_url,
+                    headers=headers,
+                    json=payload
+                ) as resp:
+                    text_res = await resp.text()
+                    text_clean = text_res.strip()
+
+                    print(
+                        f"🔍 DEBUG [{service_name}] "
+                        f"Status: {resp.status} | "
+                        f"Content-Type: {resp.headers.get('Content-Type', '')} | "
+                        f"Response: {text_clean[:500]}"
+                    )
+
+                    location = resp.headers.get("Location")
+                    if location and location.startswith(("http://", "https://")):
+                        return location
+
+                    direct = find_short_url(text_clean)
+                    if direct:
+                        return direct
 
                     try:
-                        data = json.loads(text_res_clean)
-                        if isinstance(data, list) and len(data) > 0:
-                            data = data[0]
+                        data = json.loads(text_clean)
+                        found = find_short_url(data)
+                        if found:
+                            return found
+                    except json.JSONDecodeError:
+                        pass
 
-                        short_link = (
-                            data.get("shortenedUrl") or 
-                            data.get("url") or 
-                            data.get("link") or 
-                            data.get("short_url") or
-                            data.get("result") or
-                            data.get("message") or
-                            data.get("data")
-                        )
-                        if isinstance(short_link, dict):
-                            short_link = short_link.get("url") or short_link.get("shortenedUrl") or short_link.get("link")
+                    print(
+                        f"⚠️ [{service_name}] API POST không trả về URL rút gọn hợp lệ."
+                    )
 
-                        if short_link and isinstance(short_link, str):
-                            cleaned_link = short_link.strip().replace("\\/", "/")
-                            if cleaned_link.startswith("http"):
-                                return cleaned_link
-                    except Exception as json_err:
-                        print(f"⚠️ Lỗi parse JSON {service_name}: {json_err}")
+            else:
+                print(f"❌ Method API không được hỗ trợ: {method}")
 
-            elif config["method"] == "POST":
-                async with session.post(config["url"], headers=config["headers"], json={"url": destination_url, "taskType": config.get("task_type", "review")}) as resp:
-                    text_res = await resp.text()
-                    text_res_clean = text_res.strip()
-                    print(f"🔍 DEBUG [{service_name}] Status: {resp.status} | Response: {text_res_clean[:300]}")
-
-                    if text_res_clean.startswith("http://") or text_res_clean.startswith("https://"):
-                        return text_res_clean.replace("\\/", "/")
-
-                    try:
-                        data = json.loads(text_res_clean)
-                        short_link = (
-                            data.get("shortenedUrl") or 
-                            data.get("url") or 
-                            data.get("link") or 
-                            data.get("short_url") or
-                            data.get("result") or
-                            data.get("message") or
-                            data.get("data")
-                        )
-                        if isinstance(short_link, dict):
-                            short_link = short_link.get("url") or short_link.get("shortenedUrl") or short_link.get("link")
-
-                        if short_link and isinstance(short_link, str):
-                            cleaned_link = short_link.strip().replace("\\/", "/")
-                            if cleaned_link.startswith("http"):
-                                return cleaned_link
-                    except Exception as e:
-                        print(f"⚠️ Lỗi parse JSON POST {service_name}: {e}")
+        except asyncio.TimeoutError:
+            print(f"❌ Timeout khi gọi API {service_name}")
+        except aiohttp.ClientError as e:
+            print(f"❌ Lỗi HTTP API {service_name}: {e}")
         except Exception as e:
-            print(f"❌ Lỗi kết nối API {service_name}: {e}")
-            
+            print(f"❌ Lỗi không xác định API {service_name}: {type(e).__name__}: {e}")
+
     return None
+
 
 class ChannelSelectDropdown(discord.ui.Select):
     def __init__(self, guild):
@@ -473,7 +549,7 @@ async def nhancoin(interaction: discord.Interaction):
                         if user_id in users_data:
                             current_total_coins = users_data[user_id].get("coins", 0) + reward_coins
                             users_data[user_id]["coins"] = current_total_coins
-                            users_data[user_id]["total_completed"] = users_data[user_id].get("total_completed", 0) + 1
+                            # /check-status đã tăng total_completed, không tăng lần 2 ở đây.
                             write_db(users_data)
                         
                         if interaction.guild:
