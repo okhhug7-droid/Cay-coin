@@ -37,6 +37,7 @@ DAILY_LIMITS = {
     "trafficfucser": 2,           
 }
 
+# Cấu hình chuẩn xác cho từng API
 API_CONFIGS = {
     "octolink": {
         "url": "https://octolink.vip/api?api=1617ae1eea0cf96a7f9312494a10b35507b65e3f",
@@ -235,8 +236,6 @@ async def shorten_with_api(service_name, destination_url):
         try:
             if config["method"] == "GET":
                 base_url = config["url"]
-                
-                # Mã hóa URL để không bị mất đoạn &user=... qua các API bên thứ 3
                 encoded_url = urllib.parse.quote(destination_url)
                 
                 if "bbmkts.com" in base_url:
