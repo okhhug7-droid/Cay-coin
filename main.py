@@ -6,6 +6,7 @@ import random
 import string
 import os
 import json
+import urllib.parse
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import aiohttp
@@ -235,13 +236,16 @@ async def shorten_with_api(service_name, destination_url):
             if config["method"] == "GET":
                 base_url = config["url"]
                 
+                # Mã hóa URL để không bị mất đoạn &user=... qua các API bên thứ 3
+                encoded_url = urllib.parse.quote(destination_url)
+                
                 if "bbmkts.com" in base_url:
-                    api_url = f"{base_url}&longurl={destination_url}"
+                    api_url = f"{base_url}&longurl={encoded_url}"
                 elif "traffichub.vn" in base_url:
-                    api_url = f"{base_url}&sub_link={destination_url}"
+                    api_url = f"{base_url}&sub_link={encoded_url}"
                 else:
                     separator = "&" if "?" in base_url else "?"
-                    api_url = f"{base_url}{separator}url={destination_url}"
+                    api_url = f"{base_url}{separator}url={encoded_url}"
 
                 async with session.get(api_url) as resp:
                     text_res = await resp.text()
@@ -544,7 +548,7 @@ def run_bot():
         print("❌ LỖI: Chưa cấu hình biến môi trường BOT_TOKEN!")
 
 if __name__ == '__main__':
-    port = int(os.environ.com.get("PORT", 8080) if hasattr(os.environ, "com") else os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 8080))
     
     bot_thread = Thread(target=run_bot)
     bot_thread.daemon = True
