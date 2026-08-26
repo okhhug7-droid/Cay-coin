@@ -23,7 +23,6 @@ CONFIG_FILE = 'config.json'
 
 # Giới hạn số lần làm mỗi ngày cho từng dịch vụ
 DAILY_LIMITS = {
-    "octolink": 150,              
     "link4m": 2,                  
     "bbmkts": 1,                  
     "phienchoso_review": 2,       
@@ -40,10 +39,6 @@ DAILY_LIMITS = {
 
 # Cấu hình chuẩn xác cho từng API
 API_CONFIGS = {
-    "octolink": {
-        "url": "https://octolink.vip/api?api=1617ae1eea0cf96a7f9312494a10b35507b65e3f",
-        "method": "GET"
-    },
     "link4m": {
         "url": "https://link4m.co/api-shorten/v2?api=6a714550eb578b3aa004e7e9",
         "method": "GET"
@@ -445,7 +440,6 @@ class LinkSelectDropdown(discord.ui.Select):
 
         custom_emoji = discord.PartialEmoji.from_str("<a:emoji_45:1541782094714511400>")
         options = [
-            discord.SelectOption(label="Octolink", description="+450 VNĐ (~450 Coin)", emoji=custom_emoji, value="octolink"),
             discord.SelectOption(label="Link4m", description="+370 VNĐ (~370 Coin)", emoji=custom_emoji, value="link4m"),
             discord.SelectOption(label="Bbmkts", description="+450 VNĐ (~450 Coin)", emoji=custom_emoji, value="bbmkts"),
             discord.SelectOption(label="Phienchoso Review", description="+1,000 VNĐ (~1,000 Coin)", emoji=custom_emoji, value="phienchoso_review"),
@@ -467,7 +461,7 @@ class LinkSelectDropdown(discord.ui.Select):
         
         self.selected_service = self.values[0]
         coin_mapping = {
-            "octolink": 450, "link4m": 370, "bbmkts": 450,
+            "link4m": 370, "bbmkts": 450,
             "phienchoso_review": 1000, "phienchoso_tukhoa": 380, "linktop": 250,
             "site2s": 250, "taskdaily_review_map": 1000, "taskdaily_organic": 350,
             "taskdaily_backlink": 300, "traffichub": 300, "lentop": 300, "trafficfucser": 200
