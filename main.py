@@ -256,7 +256,6 @@ async def shorten_with_api(service_name, destination_url):
                         if isinstance(data, list) and len(data) > 0:
                             data = data[0]
 
-                        # Quét tất cả các key phổ biến chứa link rút gọn
                         short_link = (
                             data.get("shortenedUrl") or 
                             data.get("url") or 
@@ -298,8 +297,6 @@ async def shorten_with_api(service_name, destination_url):
         except Exception as e:
             print(f"❌ Lỗi kết nối API {service_name}: {e}")
             
-    # Dự phòng an toàn: Nếu API của dịch vụ đó chết/lỗi không trả về được link, 
-    # thay vì chặn hẳn, hàm sẽ trả về link gốc để hệ thống vẫn chạy bình thường cho bạn test
     return destination_url
 
 class ChannelSelectDropdown(discord.ui.Select):
@@ -547,7 +544,7 @@ def run_bot():
         print("❌ LỖI: Chưa cấu hình biến môi trường BOT_TOKEN!")
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.com.get("PORT", 8080) if hasattr(os.environ, "com") else os.environ.get("PORT", 8080))
     
     bot_thread = Thread(target=run_bot)
     bot_thread.daemon = True
