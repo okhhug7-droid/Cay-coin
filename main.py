@@ -139,7 +139,7 @@ def home():
 
 @app.route('/save-user', methods=['POST'])
 def save_user():
-    req = request.json
+    req = request.json or {}
     user_id = str(req.get('user_id'))
     service = req.get('service')
     today = get_current_date_str()
@@ -235,7 +235,6 @@ async def shorten_with_api(service_name, destination_url):
             if config["method"] == "GET":
                 base_url = config["url"]
                 
-                # Tự động điều chỉnh tham số cho từng dịch vụ
                 if "bbmkts.com" in base_url:
                     api_url = f"{base_url}&longurl={destination_url}"
                 elif "traffichub.vn" in base_url:
@@ -245,62 +244,56 @@ async def shorten_with_api(service_name, destination_url):
                     api_url = f"{base_url}{separator}url={destination_url}"
 
                 async with session.get(api_url) as resp:
-                    content_type = resp.headers.get('Content-Type', '')
                     text_res = await resp.text()
                     text_res_clean = text_res.strip()
-                    
                     print(f"🔍 DEBUG [{service_name}] Status: {resp.status} | Response: {text_res_clean[:300]}")
 
                     if text_res_clean.startswith("http") and destination_url not in text_res_clean:
                         return text_res_clean
 
-                    if 'application/json' in content_type or text_res_clean.startswith("{") or text_res_clean.startswith("["):
-                        try:
-                            data = json.loads(text_res_clean)
-                            if isinstance(data, list) and len(data) > 0:
-                                data = data[0]
+                    try:
+                        data = json.loads(text_res_clean)
+                        if isinstance(data, list) and len(data) > 0:
+                            data = data[0]
 
-                            short_link = (
-                                data.get("shortenedUrl") or 
-                                data.get("url") or 
-                                data.get("link") or 
-                                data.get("short_url") or
-                                data.get("result") or
-                                data.get("message") or
-                                (data.get("data") and isinstance(data.get("data"), dict) and (data["data"].get("url") or data["data"].get("shortenedUrl") or data["data"].get("link")))
-                            )
-                            if short_link and isinstance(short_link, str) and short_link.startswith("http"):
-                                return short_link.strip()
-                        except Exception as json_err:
-                            print(f"⚠️ Lỗi parse JSON {service_name}: {json_err}")
+                        short_link = (
+                            data.get("shortenedUrl") or 
+                            data.get("url") or 
+                            data.get("link") or 
+                            data.get("short_url") or
+                            data.get("result") or
+                            data.get("message") or
+                            (data.get("data") and isinstance(data.get("data"), dict) and (data["data"].get("url") or data["data"].get("shortenedUrl") or data["data"].get("link")))
+                        )
+                        if short_link and isinstance(short_link, str) and short_link.startswith("http"):
+                            return short_link.strip()
+                    except Exception as json_err:
+                        print(f"⚠️ Lỗi parse JSON {service_name}: {json_err}")
 
             elif config["method"] == "POST":
                 async with session.post(config["url"], headers=config["headers"], json={"url": destination_url, "taskType": config.get("task_type", "review")}) as resp:
-                    content_type = resp.headers.get('Content-Type', '')
                     text_res = await resp.text()
                     text_res_clean = text_res.strip()
-                    
                     print(f"🔍 DEBUG [{service_name}] Status: {resp.status} | Response: {text_res_clean[:300]}")
 
                     if text_res_clean.startswith("http") and destination_url not in text_res_clean:
                         return text_res_clean
 
-                    if 'application/json' in content_type or text_res_clean.startswith("{"):
-                        try:
-                            data = json.loads(text_res_clean)
-                            short_link = (
-                                data.get("shortenedUrl") or 
-                                data.get("url") or 
-                                data.get("link") or 
-                                data.get("short_url") or
-                                data.get("result") or
-                                data.get("message") or
-                                (data.get("data") and isinstance(data.get("data"), dict) and (data["data"].get("url") or data["data"].get("shortenedUrl") or data["data"].get("link")))
-                            )
-                            if short_link and isinstance(short_link, str) and short_link.startswith("http"):
-                                return short_link.strip()
-                        except Exception as e:
-                            print(f"⚠️ Lỗi parse JSON POST {service_name}: {e}")
+                    try:
+                        data = json.loads(text_res_clean)
+                        short_link = (
+                            data.get("shortenedUrl") or 
+                            data.get("url") or 
+                            data.get("link") or 
+                            data.get("short_url") or
+                            data.get("result") or
+                            data.get("message") or
+                            (data.get("data") and isinstance(data.get("data"), dict) and (data["data"].get("url") or data["data"].get("shortenedUrl") or data["data"].get("link")))
+                        )
+                        if short_link and isinstance(short_link, str) and short_link.startswith("http"):
+                            return short_link.strip()
+                    except Exception as e:
+                        print(f"⚠️ Lỗi parse JSON POST {service_name}: {e}")
         except Exception as e:
             print(f"❌ Lỗi kết nối API {service_name}: {e}")
             
@@ -433,7 +426,9 @@ async def nhancoin(interaction: discord.Interaction):
     chosen_service = view.selected_service
     reward_coins = view.earned_coins
 
-    api_local_url = "http://127.0.0.1:8080"
+    # Đổi link này thành domain thật của bạn nếu đưa lên Railway/Render (ví dụ: https://ten-app.up.railway.app)
+    # Nếu chạy trên máy cá nhân để test thì giữ nguyên http://127.0.0.1:8080
+    api_local_url = os.environ.get("RENDER_EXTERNAL_URL", "http://127.0.0.1:8080")
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -488,7 +483,7 @@ async def nhancoin(interaction: discord.Interaction):
                                         color=discord.Color.green()
                                     )
                                     log_embed.add_field(name="👤 Thành viên", value=interaction.user.mention, inline=True)
-                                    log_embed.add_field(name="🛠️ Dịch vụ", value=f"`{chosen_service.upper()}`", inline=True)
+                                    log_embed.add_field(name="🛠️ Dịch vụ", value=`{chosen_service.upper()}`, inline=True)
                                     log_embed.add_field(name="🎁 Nhận được", value=f"**+{reward_coins:,}** Coin", inline=True)
                                     log_embed.add_field(name="💰 Tổng số dư hiện tại", value=f"**{current_total_coins:,}** Coin", inline=False)
                                     log_embed.set_footer(text=f"{CREATOR_NAME} • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
