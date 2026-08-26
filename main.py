@@ -426,8 +426,6 @@ async def nhancoin(interaction: discord.Interaction):
     chosen_service = view.selected_service
     reward_coins = view.earned_coins
 
-    # Đổi link này thành domain thật của bạn nếu đưa lên Railway/Render (ví dụ: https://ten-app.up.railway.app)
-    # Nếu chạy trên máy cá nhân để test thì giữ nguyên http://127.0.0.1:8080
     api_local_url = os.environ.get("RENDER_EXTERNAL_URL", "http://127.0.0.1:8080")
     
     try:
@@ -483,7 +481,7 @@ async def nhancoin(interaction: discord.Interaction):
                                         color=discord.Color.green()
                                     )
                                     log_embed.add_field(name="👤 Thành viên", value=interaction.user.mention, inline=True)
-                                    log_embed.add_field(name="🛠️ Dịch vụ", value=`{chosen_service.upper()}`, inline=True)
+                                    log_embed.add_field(name="🛠️ Dịch vụ", value=f"{chosen_service.upper()}", inline=True)
                                     log_embed.add_field(name="🎁 Nhận được", value=f"**+{reward_coins:,}** Coin", inline=True)
                                     log_embed.add_field(name="💰 Tổng số dư hiện tại", value=f"**{current_total_coins:,}** Coin", inline=False)
                                     log_embed.set_footer(text=f"{CREATOR_NAME} • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
