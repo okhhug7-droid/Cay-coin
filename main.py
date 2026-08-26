@@ -230,7 +230,7 @@ async def on_ready():
 async def shorten_with_api(service_name, destination_url):
     config = API_CONFIGS.get(service_name)
     if not config:
-        return destination_url
+        return None
 
     async with aiohttp.ClientSession() as session:
         try:
@@ -251,7 +251,7 @@ async def shorten_with_api(service_name, destination_url):
                     text_res_clean = text_res.strip()
                     print(f"🔍 DEBUG [{service_name}] Status: {resp.status} | Response: {text_res_clean[:300]}")
 
-                    if text_res_clean.startswith("http") and destination_url not in text_res_clean:
+                    if text_res_clean.startswith("http://") or text_res_clean.startswith("https://"):
                         return text_res_clean
 
                     try:
@@ -266,8 +266,11 @@ async def shorten_with_api(service_name, destination_url):
                             data.get("short_url") or
                             data.get("result") or
                             data.get("message") or
-                            (data.get("data") and isinstance(data.get("data"), dict) and (data["data"].get("url") or data["data"].get("shortenedUrl") or data["data"].get("link")))
+                            data.get("data")
                         )
+                        if isinstance(short_link, dict):
+                            short_link = short_link.get("url") or short_link.get("shortenedUrl") or short_link.get("link")
+
                         if short_link and isinstance(short_link, str) and short_link.startswith("http"):
                             return short_link.strip()
                     except Exception as json_err:
@@ -279,7 +282,7 @@ async def shorten_with_api(service_name, destination_url):
                     text_res_clean = text_res.strip()
                     print(f"🔍 DEBUG [{service_name}] Status: {resp.status} | Response: {text_res_clean[:300]}")
 
-                    if text_res_clean.startswith("http") and destination_url not in text_res_clean:
+                    if text_res_clean.startswith("http://") or text_res_clean.startswith("https://"):
                         return text_res_clean
 
                     try:
@@ -291,8 +294,11 @@ async def shorten_with_api(service_name, destination_url):
                             data.get("short_url") or
                             data.get("result") or
                             data.get("message") or
-                            (data.get("data") and isinstance(data.get("data"), dict) and (data["data"].get("url") or data["data"].get("shortenedUrl") or data["data"].get("link")))
+                            data.get("data")
                         )
+                        if isinstance(short_link, dict):
+                            short_link = short_link.get("url") or short_link.get("shortenedUrl") or short_link.get("link")
+
                         if short_link and isinstance(short_link, str) and short_link.startswith("http"):
                             return short_link.strip()
                     except Exception as e:
@@ -300,7 +306,7 @@ async def shorten_with_api(service_name, destination_url):
         except Exception as e:
             print(f"❌ Lỗi kết nối API {service_name}: {e}")
             
-    return destination_url
+    return None
 
 class ChannelSelectDropdown(discord.ui.Select):
     def __init__(self, guild):
@@ -438,13 +444,13 @@ async def nhancoin(interaction: discord.Interaction):
     link_rut_gon = await shorten_with_api(chosen_service, url_goc)
 
     if not link_rut_gon:
-        return await interaction.edit_original_response(content=f"❌ Dịch vụ **{chosen_service.upper()}** đang gặp sự cố hoặc lỗi API. Vui lòng chọn dịch vụ khác nhé!", embed=None, view=None)
+        return await interaction.edit_original_response(content=f"❌ Dịch vụ **{chosen_service.upper()}** đang gặp sự cố hoặc trả về kết quả trống. Vui lòng kiểm tra lại cấu hình hoặc chọn dịch vụ khác nhé!", embed=None, view=None)
 
     result_embed = discord.Embed(title="🪙 Xác Nhận Vượt Link", color=0x38bdf8)
     result_embed.description = (
         f"Dịch vụ bạn chọn: **{chosen_service.upper()}**\n"
         f"Phần thưởng: **{reward_coins} Coin**\n\n"
-        f"Bấm vào đường link bên dưới để làm nhiệm vụ:\n"
+        f"Bấm vào đường link bên dưới để tiến hành vượt link:\n"
         f"🔗 **[Bấm vào đây để vượt link]({link_rut_gon})**"
     )
     result_embed.set_footer(text=f"{CREATOR_NAME} | Vĩnh Phúc, VN • {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
