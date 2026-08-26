@@ -96,7 +96,6 @@ def get_vietnam_time():
 def get_current_date_str():
     return get_vietnam_time().strftime('%d/%m/%Y')
 
-
 async def daily_reset_task():
     """Reset số lần vượt trong ngày cho toàn bộ người dùng vào 00:00 giờ Việt Nam."""
     await bot.wait_until_ready()
@@ -107,7 +106,6 @@ async def daily_reset_task():
         now = get_vietnam_time()
         today = now.strftime('%d/%m/%Y')
 
-        # Chỉ reset một lần trong mỗi ngày, ngay sau khi sang 00:00 VN.
         if now.hour == 0 and now.minute == 0 and last_reset_date != today:
             try:
                 db = read_db()
@@ -127,7 +125,6 @@ async def daily_reset_task():
             except Exception as e:
                 print(f"❌ Lỗi reset số lần vượt lúc 00:00 VN: {e}")
 
-        # Kiểm tra mỗi giây để không bỏ qua thời điểm 00:00.
         await asyncio.sleep(1)
 
 def read_db():
@@ -255,10 +252,21 @@ async def on_ready():
         bot._daily_reset_started = True
         bot.loop.create_task(daily_reset_task())
 
+def is_valid_octolink(url):
+    try:
+        parsed = urllib.parse.urlparse(url)
+        host = (parsed.hostname or "").lower()
+        return (
+            parsed.scheme in ("http", "https")
+            and (host == "octolink.vip" or host.endswith(".octolink.vip"))
+        )
+    except Exception:
+        return False
+
 async def shorten_with_api(service_name, destination_url):
     """
     Gọi API rút gọn link theo từng dịch vụ và xử lý nhiều kiểu response khác nhau.
-    Link4m vẫn giữ cách gọi cũ; các API khác được xử lý linh hoạt hơn.
+    Đã tích hợp cơ chế kiểm tra domain cho Octolink.
     """
     config = API_CONFIGS.get(service_name)
     if not config:
@@ -275,14 +283,12 @@ async def shorten_with_api(service_name, destination_url):
                 if "cloudflare.com/5xx-error-landing" in value.lower():
                     return None
                 return value
-            # Một số API có thể trả URL nằm trong chuỗi.
             match = re.search(r'https?://[^\s"<>]+', value)
             if match:
                 return match.group(0).rstrip(".,)")
             return None
 
         if isinstance(obj, dict):
-            # Ưu tiên các tên trường thường dùng của shortener.
             preferred = (
                 "shortenedUrl", "shortened_url", "shorturl", "short_url",
                 "shortUrl", "short", "link", "url", "result", "message",
@@ -294,7 +300,6 @@ async def shorten_with_api(service_name, destination_url):
                     if found:
                         return found
 
-            # Tìm sâu trong các object/list còn lại.
             for value in obj.values():
                 found = find_short_url(value)
                 if found:
@@ -315,8 +320,6 @@ async def shorten_with_api(service_name, destination_url):
             base_url = config["url"]
 
             if method == "GET":
-                # Có thể cấu hình tên tham số riêng cho từng API.
-                # Giữ tương thích với cấu hình cũ.
                 if "bbmkts.com" in base_url:
                     param_name = config.get("url_param", "longurl")
                 elif "traffichub.vn" in base_url:
@@ -324,7 +327,6 @@ async def shorten_with_api(service_name, destination_url):
                 else:
                     param_name = config.get("url_param", "url")
 
-                # Dùng aiohttp params thay vì tự nối chuỗi để tránh lỗi encode URL.
                 async with session.get(
                     base_url,
                     params={param_name: destination_url},
@@ -340,29 +342,40 @@ async def shorten_with_api(service_name, destination_url):
                         f"Response: {text_clean[:500]}"
                     )
 
-                    # Một số API trả link qua HTTP redirect.
+                    # Kiểm tra Header Location nếu có redirect
                     location = resp.headers.get("Location")
                     if location and location.startswith(("http://", "https://")):
                         if "cloudflare.com/5xx-error-landing" not in location.lower():
+                            if service_name == "octolink" and not is_valid_octolink(location):
+                                print(f"❌ Octolink redirect không hợp lệ: {location}")
+                                return None
                             return location
 
-                    # API trả thẳng URL.
                     direct = find_short_url(text_clean)
+                    
+                    if service_name == "octolink":
+                        if direct and is_valid_octolink(direct):
+                            return direct
+                        print("❌ Octolink không trả về link Octolink hợp lệ.")
+                        return None
+
                     if direct:
                         return direct
 
-                    # API trả JSON.
                     try:
                         data = json.loads(text_clean)
                         found = find_short_url(data)
                         if found:
+                            if service_name == "octolink":
+                                if is_valid_octolink(found):
+                                    return found
+                                print(f"❌ Octolink JSON trả về link không hợp lệ: {found}")
+                                return None
                             return found
                     except json.JSONDecodeError:
                         pass
 
-                    print(
-                        f"⚠️ [{service_name}] API không trả về URL rút gọn hợp lệ."
-                    )
+                    print(f"⚠️ [{service_name}] API không trả về URL rút gọn hợp lệ.")
 
             elif method == "POST":
                 payload = {
@@ -402,9 +415,7 @@ async def shorten_with_api(service_name, destination_url):
                     except json.JSONDecodeError:
                         pass
 
-                    print(
-                        f"⚠️ [{service_name}] API POST không trả về URL rút gọn hợp lệ."
-                    )
+                    print(f"⚠️ [{service_name}] API POST không trả về URL rút gọn hợp lệ.")
 
             else:
                 print(f"❌ Method API không được hỗ trợ: {method}")
@@ -417,7 +428,6 @@ async def shorten_with_api(service_name, destination_url):
             print(f"❌ Lỗi không xác định API {service_name}: {type(e).__name__}: {e}")
 
     return None
-
 
 class ChannelSelectDropdown(discord.ui.Select):
     def __init__(self, guild):
@@ -472,14 +482,14 @@ class LinkSelectDropdown(discord.ui.Select):
     def __init__(self, user_id):
         self.user_id = user_id
         self.selected_service = None
-        self.earned_coins = 300
+        self.earned_coins = 440
 
         custom_emoji = discord.PartialEmoji.from_str("<a:emoji_45:1541782094714511400>")
         options = [
             discord.SelectOption(label="Link4m", description="+370 VNĐ (~370 Coin)", emoji=custom_emoji, value="link4m"),
             discord.SelectOption(label="Bbmkts", description="+450 VNĐ (~450 Coin)", emoji=custom_emoji, value="bbmkts"),
             discord.SelectOption(label="Site2s", description="+250 VNĐ (~250 Coin)", emoji=custom_emoji, value="site2s"),
-            discord.SelectOption(label="Octolink", description="+300 VNĐ (~300 Coin)", emoji=custom_emoji, value="octolink"),
+            discord.SelectOption(label="Octolink", description="+440 VNĐ (~440 Coin)", emoji=custom_emoji, value="octolink"),
             discord.SelectOption(label="Trafficfucser", description="+200 VNĐ (~200 Coin)", emoji=custom_emoji, value="trafficfucser"),
             discord.SelectOption(label="Linktop", description="+250 VNĐ (~250 Coin)", emoji=custom_emoji, value="linktop"),
             discord.SelectOption(label="Lentop", description="+300 VNĐ (~300 Coin)", emoji=custom_emoji, value="lentop"),
@@ -499,7 +509,7 @@ class LinkSelectDropdown(discord.ui.Select):
             "link4m": 370,
             "bbmkts": 450,
             "site2s": 250,
-            "octolink": 300,
+            "octolink": 440,
             "trafficfucser": 200,
             "linktop": 250,
             "lentop": 300,
@@ -508,7 +518,7 @@ class LinkSelectDropdown(discord.ui.Select):
             "phienchoso_tukhoa": 380,
             "taskdaily_review": 1000
         }
-        self.earned_coins = coin_mapping.get(self.selected_service, 300)
+        self.earned_coins = coin_mapping.get(self.selected_service, 440)
         self.view.stop()
         await interaction.response.defer()
 
@@ -585,7 +595,6 @@ async def nhancoin(interaction: discord.Interaction):
                         if user_id in users_data:
                             current_total_coins = users_data[user_id].get("coins", 0) + reward_coins
                             users_data[user_id]["coins"] = current_total_coins
-                            # /check-status đã tăng total_completed, không tăng lần 2 ở đây.
                             write_db(users_data)
                         
                         if interaction.guild:
@@ -607,34 +616,24 @@ async def nhancoin(interaction: discord.Interaction):
                                         timestamp=get_vietnam_time()
                                     )
                                     log_embed.set_thumbnail(url=interaction.user.display_avatar.url)
-                                    log_embed.set_footer(
-                                        text=f"{CREATOR_NAME} • Hệ thống vượt link"
-                                    )
-                                    await log_channel.send(
-                                        content="📢 **THÔNG BÁO VƯỢT LINK**",
-                                        embed=log_embed
-                                    )
-                        # Thông báo riêng cho chính người dùng sau khi nhận Coin.
+                                    log_embed.set_footer(text=f"{CREATOR_NAME} • Hệ thống vượt link")
+                                    await log_channel.send(content="📢 **THÔNG BÁO VƯỢT LINK**", embed=log_embed)
+
                         private_embed = discord.Embed(
                             title="🎉 VƯỢT LINK THÀNH CÔNG!",
                             description=(
-                                f"Chúc mừng {interaction.user.mention}! Bạn đã vượt link thành công.\\n\\n"
-                                f"🛠️ **Dịch vụ:** `{chosen_service.upper()}`\\n"
-                                f"🎁 **Coin nhận được:** `+{reward_coins:,} Coin`\\n"
-                                f"💰 **Số dư hiện tại:** `{current_total_coins:,} Coin`\\n\\n"
+                                f"Chúc mừng {interaction.user.mention}! Bạn đã vượt link thành công.\n\n"
+                                f"🛠️ **Dịch vụ:** `{chosen_service.upper()}`\n"
+                                f"🎁 **Coin nhận được:** `+{reward_coins:,} Coin`\n"
+                                f"💰 **Số dư hiện tại:** `{current_total_coins:,} Coin`\n\n"
                                 f"✅ Phần thưởng đã được cộng vào tài khoản của bạn."
                             ),
                             color=discord.Color.green()
                         )
                         private_embed.set_thumbnail(url=interaction.user.display_avatar.url)
-                        private_embed.set_footer(
-                            text=f"to by ph.huyy • Giờ VN {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}"
-                        )
+                        private_embed.set_footer(text=f"to by ph.huyy • Giờ VN {get_vietnam_time().strftime('%d/%m/%Y %H:%M:%S')}")
 
-                        await interaction.followup.send(
-                            embed=private_embed,
-                            ephemeral=True
-                        )
+                        await interaction.followup.send(embed=private_embed, ephemeral=True)
                         return
 
         except Exception as e:
