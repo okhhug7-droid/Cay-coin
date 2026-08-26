@@ -252,7 +252,7 @@ async def shorten_with_api(service_name, destination_url):
                     print(f"🔍 DEBUG [{service_name}] Status: {resp.status} | Response: {text_res_clean[:300]}")
 
                     if text_res_clean.startswith("http://") or text_res_clean.startswith("https://"):
-                        return text_res_clean
+                        return text_res_clean.replace("\\/", "/")
 
                     try:
                         data = json.loads(text_res_clean)
@@ -271,8 +271,10 @@ async def shorten_with_api(service_name, destination_url):
                         if isinstance(short_link, dict):
                             short_link = short_link.get("url") or short_link.get("shortenedUrl") or short_link.get("link")
 
-                        if short_link and isinstance(short_link, str) and short_link.startswith("http"):
-                            return short_link.strip()
+                        if short_link and isinstance(short_link, str):
+                            cleaned_link = short_link.strip().replace("\\/", "/")
+                            if cleaned_link.startswith("http"):
+                                return cleaned_link
                     except Exception as json_err:
                         print(f"⚠️ Lỗi parse JSON {service_name}: {json_err}")
 
@@ -283,7 +285,7 @@ async def shorten_with_api(service_name, destination_url):
                     print(f"🔍 DEBUG [{service_name}] Status: {resp.status} | Response: {text_res_clean[:300]}")
 
                     if text_res_clean.startswith("http://") or text_res_clean.startswith("https://"):
-                        return text_res_clean
+                        return text_res_clean.replace("\\/", "/")
 
                     try:
                         data = json.loads(text_res_clean)
@@ -299,8 +301,10 @@ async def shorten_with_api(service_name, destination_url):
                         if isinstance(short_link, dict):
                             short_link = short_link.get("url") or short_link.get("shortenedUrl") or short_link.get("link")
 
-                        if short_link and isinstance(short_link, str) and short_link.startswith("http"):
-                            return short_link.strip()
+                        if short_link and isinstance(short_link, str):
+                            cleaned_link = short_link.strip().replace("\\/", "/")
+                            if cleaned_link.startswith("http"):
+                                return cleaned_link
                     except Exception as e:
                         print(f"⚠️ Lỗi parse JSON POST {service_name}: {e}")
         except Exception as e:
@@ -444,7 +448,7 @@ async def nhancoin(interaction: discord.Interaction):
     link_rut_gon = await shorten_with_api(chosen_service, url_goc)
 
     if not link_rut_gon:
-        return await interaction.edit_original_response(content=f"❌ Dịch vụ **{chosen_service.upper()}** đang gặp sự cố hoặc trả về kết quả trống. Vui lòng kiểm tra lại cấu hình hoặc chọn dịch vụ khác nhé!", embed=None, view=None)
+        return await interaction.edit_original_response(content=f"❌ Dịch vụ **{chosen_service.upper()}** đang gặp sự cố hoặc trả về kết quả trống. Vui lòng thử lại sau hoặc chọn dịch vụ khác nhé!", embed=None, view=None)
 
     result_embed = discord.Embed(title="🪙 Xác Nhận Vượt Link", color=0x38bdf8)
     result_embed.description = (
