@@ -7,7 +7,7 @@ import json
 import time
 import re
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import asyncio
 from discord.ext import tasks
 
@@ -23,6 +23,12 @@ STREAK_EMOJIS = {
     "tier_3": "<a:emoji_47:1542730906173710396>",  # 30 - 60 ngày
     "tier_4": "<a:emoji_48:1542730932283510784>"   # 60 ngày trở lên
 }
+
+# Emoji cảnh báo khi quá 24h chưa tương tác
+WARNING_EMOJI = "<a:giphy:1542814648435220551>"
+
+# Emoji mới cho bảng /auto
+AUTO_EMOJI = "<a:emoji_43:1541071774194733143>"
 
 USER_AGREEMENTS = set()
 USER_TOKENS = {}
@@ -72,7 +78,7 @@ class StreakManager:
         sorted_users = sorted([str(user1), str(user2)])
         return f"{sorted_users[0]}_{sorted_users[1]}"
 
-    def get_streak_emoji(self, streak_days: int) -> str:
+    def get_base_streak_emoji(self, streak_days: int) -> str:
         if 1 <= streak_days < 10:
             return STREAK_EMOJIS["tier_1"]
         elif 10 <= streak_days < 30:
@@ -83,6 +89,17 @@ class StreakManager:
             return STREAK_EMOJIS["tier_4"]
         else:
             return STREAK_EMOJIS["tier_1"]
+
+    def get_current_streak_emoji(self, record: dict) -> str:
+        last_timestamp_str = record.get("last_timestamp")
+        if last_timestamp_str:
+            last_time = datetime.fromisoformat(last_timestamp_str)
+            now = datetime.now(timezone.utc)
+            diff_hours = (now - last_time).total_seconds() / 3600
+            if diff_hours > 24:
+                return WARNING_EMOJI
+        
+        return self.get_base_streak_emoji(record.get("streak", 1))
 
     def record_interaction(self, user1: str, user2: str) -> dict:
         if user1 == user2:
@@ -101,7 +118,7 @@ class StreakManager:
                 "last_timestamp": now.isoformat()
             }
             record = self.data[pair_key]
-            record["emoji"] = self.get_streak_emoji(record["streak"])
+            record["emoji"] = self.get_current_streak_emoji(record)
             self.save_data()
             return record
 
@@ -132,7 +149,7 @@ class StreakManager:
                 record["last_interaction_date"] = today_str
                 record["last_timestamp"] = now.isoformat()
 
-        record["emoji"] = self.get_streak_emoji(record["streak"])
+        record["emoji"] = self.get_current_streak_emoji(record)
         self.save_data()
         return record
 
@@ -327,30 +344,34 @@ async def auto_cmd(interaction: discord.Interaction):
     pending_quests = [q for q in quests if not q.get("userStatus", {}).get("completedAt")]
     total_running = len(pending_quests)
 
+    # Tạo timestamp kết thúc giả định sau 1 giờ (hoặc lấy từ thời gian hết hạn nhiệm vụ thực tế nếu có) để hiển thị đồng hồ đếm ngược Discord
+    expire_timestamp = int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())
+    countdown_display = f"<t:{expire_timestamp}:R>"
+
     quests_text = ""
     if pending_quests:
         for idx, q in enumerate(pending_quests[:4], 1):
             q_name = get_quest_name(q)
             reward = "200 Orbs"
-            quests_text += f"{idx} 📡 **{q_name}**\n▎ `{reward}` - 🟢 - Running\n\n"
+            quests_text += f"{idx} {AUTO_EMOJI} **{q_name}**\n▎ `{reward}` - {AUTO_EMOJI} - Running ({countdown_display})\n\n"
     else:
         quests_text = "🎉 Không có nhiệm vụ nào đang chạy."
 
     embed = discord.Embed(
-        title="🛡️ Discord Auto Quests",
+        title=f"{AUTO_EMOJI} Discord Auto Quests",
         description=(
-            f"👤 **Account**\n"
-            f"`{username}` ({user_id}) - 🔹 **1730 Orbs**\n\n"
-            f"📊 **Status**\n"
-            f"⚡ Running all quests...\n\n"
-            f"📡 **Progress**\n"
+            f"{AUTO_EMOJI} **Account**\n"
+            f"`{username}` ({user_id}) - {AUTO_EMOJI} **1730 Orbs**\n\n"
+            f"{AUTO_EMOJI} **Status**\n"
+            f"{AUTO_EMOJI} Running all quests... (Hết hạn {countdown_display})\n\n"
+            f"{AUTO_EMOJI} **Progress**\n"
             f"`----------` 0/{total_running} ({total_running} running)\n\n"
-            f"🏆 **Quests**\n"
+            f"{AUTO_EMOJI} **Quests**\n"
             f"{quests_text}"
         ),
         color=3092790
     )
-    embed.set_footer(text="toby ph.huyy")
+    embed.set_footer(text="by ph.huyy")
 
     class AutoControlView(discord.ui.View):
         def __init__(self):
@@ -382,7 +403,7 @@ async def streak_cmd(interaction: discord.Interaction, target_user: discord.Memb
 
     record = streak_manager.record_interaction(user1, user2)
     streak_days = record.get("streak", 1)
-    streak_emoji = record.get("emoji", STREAK_EMOJIS["tier_1"])
+    streak_emoji = streak_manager.get_current_streak_emoji(record)
     guild_rand_emoji = get_guild_random_emoji(FIXED_GUILD_ID)
 
     embed = discord.Embed(
@@ -394,7 +415,8 @@ async def streak_cmd(interaction: discord.Interaction, target_user: discord.Memb
             f"• **1 - 10 ngày:** {STREAK_EMOJIS['tier_1']}\n"
             f"• **10 - 30 ngày:** {STREAK_EMOJIS['tier_2']}\n"
             f"• **30 - 60 ngày:** {STREAK_EMOJIS['tier_3']}\n"
-            f"• **> 60 ngày:** {STREAK_EMOJIS['tier_4']}\n\n"
+            f"• **> 60 ngày:** {STREAK_EMOJIS['tier_4']}\n"
+            f"• **Quá 24h không tương tác:** {WARNING_EMOJI}\n\n"
             f"⚠️ *Lưu ý: Quá 48h không tương tác chéo, chuỗi sẽ tự động reset về 0!*"
         ),
         color=3092790
@@ -432,7 +454,7 @@ async def invite_streak_cmd(interaction: discord.Interaction, target_user: disco
             
             record = streak_manager.record_interaction(user1, user2)
             streak_days = record.get("streak", 1)
-            streak_emoji = record.get("emoji", STREAK_EMOJIS["tier_1"])
+            streak_emoji = streak_manager.get_current_streak_emoji(record)
 
             for child in self.children:
                 child.disabled = True
@@ -515,7 +537,7 @@ async def help_cmd(interaction: discord.Interaction):
         ),
         inline=False
     )
-    embed.set_footer(text="toby ph.huyy")
+    embed.set_footer(text="by ph.huyy")
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
