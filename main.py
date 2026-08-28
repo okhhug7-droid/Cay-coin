@@ -276,7 +276,10 @@ class WordChainGame:
 # ── KHỞI TẠO BOT ───────────────────────────────────────────────────────────
 class QuestBotApp(discord.Client):
     def __init__(self):
-        super().__init__(intents=discord.Intents.default() | discord.Intents.message_content)
+        # Sửa lại intents để tránh lỗi 'flag_value' object has no attribute 'value' trên Python 3.13
+        intents = discord.Intents.default()
+        intents.message_content = True
+        super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
