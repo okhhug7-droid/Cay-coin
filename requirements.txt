@@ -1,6 +1,1 @@
-discord.py
-flask
-flask-cors
-aiohttp
-pytz
-gunicorn
+requests>=2.31.0
