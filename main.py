@@ -3,8 +3,6 @@ from discord import app_commands
 import os
 import requests
 import json
-import re
-from typing import Optional
 from datetime import datetime, timezone
 import asyncio
 from discord.ext import tasks
@@ -15,20 +13,17 @@ FIXED_GUILD_ID = "1503922700408586240"
 STREAK_FILE = "streaks_data.json"
 CONFIG_FILE = "bot_config.json"
 ADMIN_USER_ID = 1180179460339810314  # ID người dùng có toàn quyền
-RANDOM_EMOJIS = [":emoji_43:", "⚡", "🔥", "🚀", "💎", "⭐", "🛡️", "🎯"]
+RANDOM_EMOJIS = ["⚡", "🔥", "🚀", "💎", "⭐", "🛡️", "🎯", "✨"]
 
 STREAK_EMOJIS = {
-    "tier_1": "<a:emoji_46:1542730770966122517>",  # 1 - 10 ngày
-    "tier_2": "<a:emoji_47:1542730872820604938>",  # 10 - 30 ngày
-    "tier_3": "<a:emoji_47:1542730906173710396>",  # 30 - 60 ngày
-    "tier_4": "<a:emoji_48:1542730932283510784>"   # 60 ngày trở lên
+    "tier_1": "<a:emoji_46:1542730770966122517>",
+    "tier_2": "<a:emoji_47:1542730872820604938>",
+    "tier_3": "<a:emoji_47:1542730906173710396>",
+    "tier_4": "<a:emoji_48:1542730932283510784>"
 }
-
-# Emoji cảnh báo khi quá 24h chưa tương tác
 WARNING_EMOJI = "<a:giphy:1542814648435220551>"
 
-
-# ── QUẢN LÝ CẤU HÌNH KÊNH THÔNG BÁO OCTOLINK ────────────────────────────────
+# ── QUẢN LÝ CẤU HÌNH ────────────────────────────────────────────────────────
 def load_config() -> dict:
     if os.path.exists(CONFIG_FILE):
         try:
@@ -46,7 +41,7 @@ def save_config(data: dict):
         pass
 
 
-# ── HỆ THỐNG QUẢN LÝ CHUỖI TƯƠNG TÁC (STREAK SYSTEM) ───────────────────────
+# ── HỆ THỐNG STREAK ────────────────────────────────────────────────────────
 class StreakManager:
     def __init__(self, filepath: str = STREAK_FILE):
         self.filepath = filepath
@@ -73,32 +68,23 @@ class StreakManager:
         return f"{sorted_users[0]}_{sorted_users[1]}"
 
     def get_base_streak_emoji(self, streak_days: int) -> str:
-        if 1 <= streak_days < 10:
-            return STREAK_EMOJIS["tier_1"]
-        elif 10 <= streak_days < 30:
-            return STREAK_EMOJIS["tier_2"]
-        elif 30 <= streak_days <= 60:
-            return STREAK_EMOJIS["tier_3"]
-        elif streak_days > 60:
-            return STREAK_EMOJIS["tier_4"]
-        else:
-            return STREAK_EMOJIS["tier_1"]
+        if 1 <= streak_days < 10: return STREAK_EMOJIS["tier_1"]
+        elif 10 <= streak_days < 30: return STREAK_EMOJIS["tier_2"]
+        elif 30 <= streak_days <= 60: return STREAK_EMOJIS["tier_3"]
+        elif streak_days > 60: return STREAK_EMOJIS["tier_4"]
+        return STREAK_EMOJIS["tier_1"]
 
     def get_current_streak_emoji(self, record: dict) -> str:
         last_timestamp_str = record.get("last_timestamp")
         if last_timestamp_str:
             last_time = datetime.fromisoformat(last_timestamp_str)
             now = datetime.now(timezone.utc)
-            diff_hours = (now - last_time).total_seconds() / 3600
-            if diff_hours > 24:
+            if (now - last_time).total_seconds() / 3600 > 24:
                 return WARNING_EMOJI
-        
         return self.get_base_streak_emoji(record.get("streak", 1))
 
     def record_interaction(self, user1: str, user2: str) -> dict:
-        if user1 == user2:
-            return {"error": "Không thể tự tạo chuỗi với chính mình!"}
-
+        if user1 == user2: return {"error": "Không thể tự tạo chuỗi với chính mình!"}
         pair_key = self._get_pair_key(user1, user2)
         now = datetime.now(timezone.utc)
         today_str = now.strftime("%Y-%m-%d")
@@ -117,18 +103,12 @@ class StreakManager:
             return record
 
         record = self.data[pair_key]
-        last_date_str = record.get("last_interaction_date", today_str)
-        last_date = datetime.strptime(last_date_str, "%Y-%m-%d").date()
-        current_date = now.date()
-        diff_days = (current_date - last_date).days
+        last_date = datetime.strptime(record.get("last_interaction_date", today_str), "%Y-%m-%d").date()
+        diff_days = (now.date() - last_date).days
 
-        last_interactor = record.get("last_interactor")
-
-        if str(user1) != last_interactor:
-            if diff_days == 0:
-                record["last_timestamp"] = now.isoformat()
-            elif diff_days == 1:
-                record["streak"] += 1
+        if str(user1) != record.get("last_interactor"):
+            if diff_days <= 1:
+                if diff_days == 1: record["streak"] += 1
                 record["last_interaction_date"] = today_str
                 record["last_interactor"] = str(user1)
                 record["last_timestamp"] = now.isoformat()
@@ -147,61 +127,156 @@ class StreakManager:
         self.save_data()
         return record
 
-
 streak_manager = StreakManager()
 
 
-# ── HELPER GUILD RANDOM EMOJI ──────────────────────────────────────────────
-def get_guild_random_emoji(guild_id: str) -> str:
-    digits = [c for c in guild_id if c.isdigit()]
-    if not digits:
-        return RANDOM_EMOJIS[0]
-    chosen_digit = int(digits[0])
-    return RANDOM_EMOJIS[chosen_digit % len(RANDOM_EMOJIS)]
+# ── HỆ THỐNG MINIGAME NỐI TỪ ────────────────────────────────────────────────
+active_word_games = {} # channel_id: WordChainGame
+
+class WordChainModal(discord.ui.Modal, title="Nhập từ để tiếp tục chuỗi"):
+    word_input = discord.ui.TextInput(
+        label="Từ của bạn (2 tiếng)",
+        placeholder="Ví dụ: học tập, vui vẻ...",
+        min_length=2,
+        max_length=50,
+        required=True
+    )
+
+    def __init__(self, game_session):
+        super().__init__()
+        self.game_session = game_session
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.game_session.process_word(interaction, self.word_input.value.strip())
 
 
-# ── KHO ĐỒ VÀ MINI-GAME MINECRAFT ──────────────────────────────────────────
-player_inventories = {}
+class WordChainView(discord.ui.View):
+    def __init__(self, game_session):
+        super().__init__(timeout=None)
+        self.game_session = game_session
 
-MINING_DROPS = [
-    {"name": "Đất (Dirt)", "emoji": "🟫", "rate": 50},
-    {"name": "Đá (Cobblestone)", "emoji": "🧱", "rate": 30},
-    {"name": "Sắt (Iron)", "emoji": "⛓️", "rate": 15},
-    {"name": "Kim cương (Diamond)", "emoji": "💎", "rate": 5},
-]
+    @discord.ui.button(label="Nhập từ ✍️", style=discord.ButtonStyle.green, custom_id="wc_input")
+    async def input_word_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in [self.game_session.player1.id, self.game_session.player2.id]:
+            return await interaction.response.send_message("❌ Bạn không tham gia trận đấu này!", ephemeral=True)
+        
+        if interaction.user.id != self.game_session.current_turn.id:
+            return await interaction.response.send_message(f"❌⏳ Chưa đến lượt bạn! Đang chờ **{self.game_session.current_turn.display_name}**.", ephemeral=True)
 
-CRAFTING_RECIPES = {
-    "cuốc_sắt": {"name": "Cuốc Sắt ⛏️", "cost": {"⛓️ Sắt": 3, "🧱 Đá": 2}},
-    "kiếm_kim_cương": {"name": "Kiếm Kim Cương 🗡️", "cost": {"💎 Kim cương": 2, "🧱 Đá": 1}},
-    "giáp_sắt": {"name": "Giáp Sắt 🛡️", "cost": {"⛓️ Sắt": 5}},
-}
+        await interaction.response.send_modal(WordChainModal(self.game_session))
 
-MOB_DROPS = [
-    {"name": "Zombie", "emoji": "🧟", "item": "Thịt thối 🥩", "rate": 50},
-    {"name": "Skeleton", "emoji": "💀", "item": "Xương 🦴", "rate": 30},
-    {"name": "Creeper", "emoji": "💥", "item": "Thuốc súng 🧨", "rate": 15},
-    {"name": "Ender Dragon / Enderman", "emoji": "👾", "item": "Ngọc Ender 🔮", "rate": 5},
-]
+    @discord.ui.button(label="Đầu hàng 🏳️", style=discord.ButtonStyle.red, custom_id="wc_surrender")
+    async def surrender_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in [self.game_session.player1.id, self.game_session.player2.id]:
+            return await interaction.response.send_message("❌ Bạn không tham gia trận đấu này!", ephemeral=True)
+        
+        await self.game_session.end_game_by_surrender(interaction, loser=interaction.user)
 
-DIMENSION_DROPS = {
-    "nether": [
-        {"name": "Thạch anh Nether", "emoji": "🪙", "rate": 50},
-        {"name": "Vàng thỏi", "emoji": "🧈", "rate": 30},
-        {"name": "Mảnh vỡ Netherite", "emoji": "🛡️", "rate": 15},
-        {"name": "Ngọn lửa Blaze", "emoji": "🔥", "rate": 5},
-    ],
-    "end": [
-        {"name": "Vảy Rồng", "emoji": "🐉", "rate": 60},
-        {"name": "Trái Chorus", "emoji": "🟣", "rate": 30},
-        {"name": "Elytra (Cánh)", "emoji": "🪽", "rate": 10},
-    ]
-}
+
+class WordChainGame:
+    def __init__(self, channel, player1, player2):
+        self.channel = channel
+        self.player1 = player1
+        self.player2 = player2
+        self.current_turn = player1
+        self.current_word = ""
+        self.history = []
+        self.is_active = True
+
+    async def start(self, message_or_interaction):
+        starters = ["Học tập", "Yêu thương", "Mặt trời", "Cây xanh", "Biển xanh", "Đất nước"]
+        self.current_word = random.choice(starters).lower()
+        self.history.append(self.current_word)
+
+        embed = discord.Embed(
+            title="🎮 MINIGAME NỐI TỪ TIẾNG VIỆT",
+            description=(
+                f"⚔️ **Đối thủ:** <@{self.player1.id}> 🆚 <@{self.player2.id}>\n\n"
+                f"📌 **Từ khởi đầu:** ` {self.current_word.upper()} `\n"
+                f"👉 Đến lượt: **{self.current_turn.mention}**\n\n"
+                f"> *Bấm nút **Nhập từ** bên dưới để nối từ tiếp theo (Phải bắt đầu bằng từ cuối của từ trước).*"
+            ),
+            color=0x3498DB,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.set_footer(text="Nối từ cùng bạn bè • Sử dụng !start để bắt đầu")
+        
+        view = WordChainView(self)
+        if isinstance(message_or_interaction, discord.Interaction):
+            await message_or_interaction.response.send_message(embed=embed, view=view)
+        else:
+            await message_or_interaction.channel.send(embed=embed, view=view)
+
+    async def process_word(self, interaction: discord.Interaction, word: str):
+        word_clean = word.lower()
+        parts = word_clean.split()
+
+        if len(parts) < 2:
+            return await interaction.response.send_message("❌ Từ hợp lệ phải gồm ít nhất 2 tiếng (ví dụ: `vui vẻ`).", ephemeral=True)
+
+        last_syllable = self.current_word.split()[-1]
+        first_syllable = parts[0]
+
+        if first_syllable != last_syllable:
+            return await interaction.response.send_message(f"❌ Từ phải bắt đầu bằng tiếng **'{last_syllable.upper()}'**!", ephemeral=True)
+
+        if word_clean in self.history:
+            return await interaction.response.send_message(f"❌ Từ **'{word}'** đã được sử dụng trước đó trong trận đấu!", ephemeral=True)
+
+        # ✅ Nối đúng thành công
+        self.history.append(word_clean)
+        self.current_word = word_clean
+        self.current_turn = self.player2 if self.current_turn == self.player1 else self.player1
+
+        history_text = " ➡️ ".join([f"`{w}`" for w in self.history[-5:]])
+        if len(self.history) > 5:
+            history_text = "... ➡️ " + history_text
+
+        embed = discord.Embed(
+            title="🎮 MINIGAME NỐI TỪ TIẾNG VIỆT",
+            description=(
+                f"⚔️ **Đối thủ:** <@{self.player1.id}> 🆚 <@{self.player2.id}>\n\n"
+                f"✅ <@{interaction.user.id}> đã nối đúng từ: **`{word}`**\n"
+                f"📌 **Từ hiện tại:** ` {self.current_word.upper()} `\n"
+                f"👉 Đến lượt: **{self.current_turn.mention}**\n\n"
+                f"📜 **Lịch sử gần đây:**\n{history_text}"
+            ),
+            color=0x2ECC71,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.set_footer(text="Nối từ cùng bạn bè • Tiếp tục chiến đấu!")
+        
+        view = WordChainView(self)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    async def end_game_by_surrender(self, interaction: discord.Interaction, loser):
+        self.is_active = False
+        winner = self.player2 if loser == self.player1 else self.player1
+
+        embed = discord.Embed(
+            title="🏆 KẾT QUẢ TRẬN ĐẤU NỐI TỪ",
+            description=(
+                f"❌🏳️ **{loser.mention}** đã đầu hàng!\n\n"
+                f"✅ Xin chúc mừng **{winner.mention}** đã giành chiến thắng thuyết phục!\n"
+                f"📊 Tổng số từ đã nối thành công trong trận: `{len(self.history)} từ`"
+            ),
+            color=0xE74C3C,
+            timestamp=datetime.now(timezone.utc)
+        )
+        if self.channel.id in active_word_games:
+            del active_word_games[self.channel.id]
+
+        for child in interaction.message.components:
+            for item in child.children:
+                item.disabled = True
+
+        await interaction.response.edit_message(embed=embed, view=interaction.message.components[0] and discord.ui.View.from_message(interaction.message) if False else None)
 
 
 # ── KHỞI TẠO BOT ───────────────────────────────────────────────────────────
 class QuestBotApp(discord.Client):
     def __init__(self):
-        super().__init__(intents=discord.Intents.default())
+        super().__init__(intents=discord.Intents.default() | discord.Intents.message_content)
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
@@ -213,394 +288,166 @@ client = QuestBotApp()
 
 @client.event
 async def on_ready():
-    print(f"Bot đã sẵn sàng: {client.user}")
+    print(f"Bot đã sẵn sàng: {client.user} - Đã chuyển sang dùng lệnh tiền tố !start!")
 
-
-# Lệnh /streak
-@client.tree.command(name="streak", description="Kiểm tra chuỗi tương tác (Streak) với người dùng khác")
-@app_commands.describe(target_user="Người bạn muốn kiểm tra chuỗi tương tác")
-async def streak_cmd(interaction: discord.Interaction, target_user: discord.Member):
-    user1 = str(interaction.user.id)
-    user2 = str(target_user.id)
-    
-    if user1 == user2:
-        await interaction.response.send_message("❌ Bạn không thể tạo chuỗi với chính mình!", ephemeral=True)
+@client.event
+async def on_message(message):
+    if message.author.bot:
         return
+
+    # Lệnh prefix !start [@user]
+    if message.content.startswith("!start"):
+        args = message.content.split()
+        if not message.mentions:
+            return await message.channel.send("❌ Vui lòng tag một người bạn để bắt đầu, ví dụ: `!start @user`")
+        
+        opponent = message.mentions[0]
+        if opponent.bot:
+            return await message.channel.send("❌ Bạn không thể thách đấu bot!")
+        if opponent.id == message.author.id:
+            return await message.channel.send("❌ Bạn không thể tự đấu với chính mình!")
+
+        channel_id = message.channel.id
+        if channel_id in active_word_games and active_word_games[channel_id].is_active:
+            return await message.channel.send("❌ Kênh này đang có một ván Nối từ khác diễn ra!")
+
+        game = WordChainGame(message.channel, message.author, opponent)
+        active_word_games[channel_id] = game
+        await game.start(message)
+
+
+# ── CÁC LỆNH DISCORD KHÁC ──────────────────────────────────────────────────
+
+@client.tree.command(name="streak", description="Kiểm tra chuỗi tương tác (Streak) với giao diện cao cấp")
+@app_commands.describe(target_user="Người bạn muốn kiểm tra chuỗi")
+async def streak_cmd(interaction: discord.Interaction, target_user: discord.Member):
+    user1, user2 = str(interaction.user.id), str(target_user.id)
+    if user1 == user2:
+        return await interaction.response.send_message("❌ Bạn không thể kiểm tra chuỗi với chính mình!", ephemeral=True)
 
     record = streak_manager.record_interaction(user1, user2)
     streak_days = record.get("streak", 1)
-    streak_emoji = streak_manager.get_current_streak_emoji(record)
-    guild_rand_emoji = get_guild_random_emoji(FIXED_GUILD_ID)
-
+    
     embed = discord.Embed(
-        title=f"{guild_rand_emoji} HỆ THỐNG CHUỖI TƯƠNG TÁC (STREAK)",
+        title="✨ HỆ THỐNG CHUỖI TƯƠNG TÁC (STREAK)",
         description=(
-            f"🤝 **Cặp đôi:** <@{user1}> & <@{target_user.id}>\n"
-            f"🔥 **Số ngày chuỗi hiện tại:** `{streak_days} ngày` {streak_emoji}\n\n"
-            f"**Quy định mốc Emoji Streak:**\n"
+            f"🤝 **Cặp đôi:** <@{user1}>  💖  <@{user2}>\n\n"
+            f"🔥 **Chuỗi tương tác hiện tại:** ` {streak_days} NGÀY ` {streak_manager.get_current_streak_emoji(record)}\n"
+            f"─────────────────────────────"
+        ),
+        color=0x5865F2,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.add_field(
+        name="📌 Quy định mốc Streak",
+        value=(
             f"• **1 - 10 ngày:** {STREAK_EMOJIS['tier_1']}\n"
             f"• **10 - 30 ngày:** {STREAK_EMOJIS['tier_2']}\n"
             f"• **30 - 60 ngày:** {STREAK_EMOJIS['tier_3']}\n"
             f"• **> 60 ngày:** {STREAK_EMOJIS['tier_4']}\n"
-            f"• **Quá 24h không tương tác:** {WARNING_EMOJI}\n\n"
-            f"⚠️ *Lưu ý: Quá 48h không tương tác chéo, chuỗi sẽ tự động reset về 0!*"
+            f"• **Cảnh báo quá 24h:** {WARNING_EMOJI}"
         ),
-        color=3092790
+        inline=False
     )
-    embed.set_footer(text=f"Guild ID: {FIXED_GUILD_ID}")
-    
+    embed.set_thumbnail(url=interaction.user.display_avatar.url)
+    embed.set_footer(text="Hệ thống Streak Tự động • Giữ lửa mỗi ngày!", icon_url=interaction.client.user.display_avatar.url)
     await interaction.response.send_message(embed=embed)
 
 
-# Lệnh /invite-streak
-@client.tree.command(name="invite-streak", description="Gửi lời mời tạo chuỗi tương tác (Streak) đến một người dùng")
-@app_commands.describe(target_user="Người bạn muốn mời tạo chuỗi streak")
-async def invite_streak_cmd(interaction: discord.Interaction, target_user: discord.Member):
-    user1 = str(interaction.user.id)
-    user2 = str(target_user.id)
-
-    if user1 == user2:
-        await interaction.response.send_message("❌ Bạn không thể mời chính mình!", ephemeral=True)
-        return
-
-    if target_user.bot:
-        await interaction.response.send_message("❌ Bạn không thể tạo chuỗi với bot!", ephemeral=True)
-        return
-
-    class InviteStreakView(discord.ui.View):
-        def __init__(self):
-            super().__init__(timeout=60)
-            self.value = None
-
-        @discord.ui.button(label="Đồng ý", style=discord.ButtonStyle.green, emoji="🤝")
-        async def accept(self, button_interaction: discord.Interaction, button: discord.ui.Button):
-            if button_interaction.user.id != target_user.id:
-                await button_interaction.response.send_message("❌ Chỉ người được mời mới có thể chấp nhận!", ephemeral=True)
-                return
-            
-            record = streak_manager.record_interaction(user1, user2)
-            streak_days = record.get("streak", 1)
-            streak_emoji = streak_manager.get_current_streak_emoji(record)
-
-            for child in self.children:
-                child.disabled = True
-            
-            await button_interaction.response.edit_message(
-                content=f"✅ **<@{target_user.id}>** đã đồng ý lời mời tạo chuỗi Streak với **<@{interaction.user.id}>**! Chuỗi hiện tại: `{streak_days} ngày` {streak_emoji}",
-                view=self
-            )
-            self.stop()
-
-        @discord.ui.button(label="Từ chối", style=discord.ButtonStyle.red, emoji="❌")
-        async def decline(self, button_interaction: discord.Interaction, button: discord.ui.Button):
-            if button_interaction.user.id != target_user.id:
-                await button_interaction.response.send_message("❌ Chỉ người được mời mới có thể từ chối!", ephemeral=True)
-                return
-
-            for child in self.children:
-                child.disabled = True
-
-            await button_interaction.response.edit_message(
-                content=f"❌ **<@{target_user.id}>** đã từ chối lời mời tạo chuỗi Streak từ **<@{interaction.user.id}>**.",
-                view=self
-            )
-            self.stop()
-
-    embed = discord.Embed(
-        title="💌 LỜI MỜI TẠO CHUỖI STREAK",
-        description=f"Hey <@{target_user.id}>! <@{interaction.user.id}> muốn bắt đầu chuỗi tương tác (Streak) với bạn. Bạn có đồng ý không?",
-        color=3092790
-    )
-    embed.set_footer(text="Lời mời có hiệu lực trong 60 giây.")
-
-    await interaction.response.send_message(content=f"<@{target_user.id}>", embed=embed, view=InviteStreakView())
-
-
-# Lệnh /setupkenh (Quản trị viên HOẶC User ID đặc biệt dùng được)
-@client.tree.command(name="setupkenh", description="Cài đặt kênh này để nhận thông báo khi có người vượt link OctoLink")
+@client.tree.command(name="setupkenh", description="Cài đặt kênh nhận thông báo OctoLink")
 async def setupkenh_cmd(interaction: discord.Interaction):
-    is_admin = interaction.user.guild_permissions.administrator
-    is_special_user = (interaction.user.id == ADMIN_USER_ID)
-
-    if not is_admin and not is_special_user:
-        await interaction.response.send_message("❌ Bạn cần có quyền Quản trị viên (Administrator) để sử dụng lệnh này!", ephemeral=True)
-        return
+    if not interaction.user.guild_permissions.administrator and interaction.user.id != ADMIN_USER_ID:
+        return await interaction.response.send_message("❌ Bạn cần quyền Quản trị viên để dùng lệnh này!", ephemeral=True)
 
     config = load_config()
     guild_id_str = str(interaction.guild_id)
-    
-    if guild_id_str not in config:
-        config[guild_id_str] = {}
-        
+    if guild_id_str not in config: config[guild_id_str] = {}
     config[guild_id_str]["channel_id"] = interaction.channel_id
     save_config(config)
 
-    await interaction.response.send_message(
-        f"✅ Đã thiết lập thành công kênh <#{interaction.channel_id}> làm nhận thông báo lượt vượt link OctoLink!",
-        ephemeral=True
-    )
-
-
-# ── MINECRAFT MINI-GAME COMMANDS ───────────────────────────────────────────
-
-@client.tree.command(name="mine", description="Đào mỏ thu thập tài nguyên kiểu Minecraft")
-async def mine_cmd(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    if user_id not in player_inventories:
-        player_inventories[user_id] = {}
-
-    roll = random.randint(1, 100)
-    cumulative = 0
-    reward = MINING_DROPS[0]
-    
-    for drop in MINING_DROPS:
-        cumulative += drop["rate"]
-        if roll <= cumulative:
-            reward = drop
-            break
-
-    item_key = f"{reward['emoji']} {reward['name'].split(' ')[0]}"
-    player_inventories[user_id][item_key] = player_inventories[user_id].get(item_key, 0) + 1
-
     embed = discord.Embed(
-        title="⛏️ KHAI THÁC TÀI NGUYÊN MINECRAFT",
-        description=f"<@{user_id}> vừa vung cuốc đập đá và nhận được: **1x {reward['emoji']} {reward['name']}**!",
-        color=3092790
-    )
-    await interaction.response.send_message(embed=embed)
-
-
-@client.tree.command(name="inventory", description="Xem balo/túi đồ Minecraft của bạn")
-async def inventory_cmd(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    inv = player_inventories.get(user_id, {})
-    
-    inv_desc = "\n".join([f"• {item}: **{qty}**" for item, qty in inv.items()]) if inv else "Balo trống rỗng! Hãy dùng `/mine` để đi đào mỏ."
-
-    embed = discord.Embed(
-        title=f"🎒 BALO CỦA {interaction.user.name}",
-        description=inv_desc,
-        color=3092790
+        title="⚙️ THIẾT LẬP THÀNH CÔNG",
+        description=f"✅ Kênh <#{interaction.channel_id}> đã được chọn làm nơi nhận thông báo vượt link OctoLink!",
+        color=0x00FF00,
+        timestamp=datetime.now(timezone.utc)
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@client.tree.command(name="craft", description="Chế tạo công cụ và trang bị từ nguyên liệu trong balo")
-@app_commands.describe(item="Chọn vật phẩm muốn chế tạo")
-@app_commands.choices(item=[
-    app_commands.Choice(name="Cuốc Sắt (3 Sắt + 2 Đá)", value="cuốc_sắt"),
-    app_commands.Choice(name="Kiếm Kim Cương (2 Kim cương + 1 Đá)", value="kiếm_kim_cương"),
-    app_commands.Choice(name="Giáp Sắt (5 Sắt)", value="giáp_sắt"),
-])
-async def craft_cmd(interaction: discord.Interaction, item: str):
-    user_id = str(interaction.user.id)
-    if user_id not in player_inventories:
-        player_inventories[user_id] = {}
-        
-    inv = player_inventories[user_id]
-    recipe = CRAFTING_RECIPES.get(item)
-    
-    for mat, required_qty in recipe["cost"].items():
-        if inv.get(mat, 0) < required_qty:
-            await interaction.response.send_message(f"❌ Bạn không đủ nguyên liệu! Còn thiếu: `{mat}` (Cần {required_qty}, đang có {inv.get(mat, 0)}).", ephemeral=True)
-            return
-
-    for mat, required_qty in recipe["cost"].items():
-        inv[mat] -= required_qty
-
-    product_key = recipe["name"]
-    inv[product_key] = inv.get(product_key, 0) + 1
-
-    embed = discord.Embed(
-        title="🛠️ CHẾ TẠO THÀNH CÔNG",
-        description=f"<@{user_id}> đã chế tạo thành công: **{recipe['name']}**!",
-        color=3092790
-    )
-    await interaction.response.send_message(embed=embed)
-
-
-@client.tree.command(name="hunt", description="Đi săn quái vật trong thế giới Minecraft")
-async def hunt_cmd(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    if user_id not in player_inventories:
-        player_inventories[user_id] = {}
-
-    roll = random.randint(1, 100)
-    cumulative = 0
-    mob = MOB_DROPS[0]
-    
-    for m in MOB_DROPS:
-        cumulative += m["rate"]
-        if roll <= cumulative:
-            mob = m
-            break
-
-    item_key = f"{mob['emoji']} {mob['item']}"
-    player_inventories[user_id][item_key] = player_inventories[user_id].get(item_key, 0) + 1
-
-    embed = discord.Embed(
-        title="⚔️ TRẬN CHIẾN SINH TỒN",
-        description=f"<@{user_id}> đã chạm trán với **{mob['emoji']} {mob['name']}** và thu hoạch được: **1x {item_key}**!",
-        color=16711680
-    )
-    await interaction.response.send_message(embed=embed)
-
-
-@client.tree.command(name="nether", description="Đốt cổng hắc diệu thạch để đi xuống Địa ngục (Nether)")
-async def nether_cmd(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    if user_id not in player_inventories:
-        player_inventories[user_id] = {}
-
-    inv = player_inventories[user_id]
-    roll = random.randint(1, 100)
-    cumulative = 0
-    reward = DIMENSION_DROPS["nether"][0]
-    
-    for item in DIMENSION_DROPS["nether"]:
-        cumulative += item["rate"]
-        if roll <= cumulative:
-            reward = item
-            break
-
-    item_key = f"{reward['emoji']} {reward['name']}"
-    inv[item_key] = inv.get(item_key, 0) + 1
-
-    embed = discord.Embed(
-        title="🔥 KHU VỰC ĐỊA NGỤC (NETHER)",
-        description=f"<@{user_id}> đã kích hoạt cổng hắc diệu thạch, bước vào Nether đầy dung nham và thu thập được: **1x {item_key}**!",
-        color=16733440
-    )
-    await interaction.response.send_message(embed=embed)
-
-
-@client.tree.command(name="end", description="Dùng Mắt Ender tìm Pháo đài ngầm và dịch chuyển đến Cổng End")
-async def end_cmd(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    if user_id not in player_inventories:
-        player_inventories[user_id] = {}
-
-    inv = player_inventories[user_id]
-    roll = random.randint(1, 100)
-    cumulative = 0
-    reward = DIMENSION_DROPS["end"][0]
-    
-    for item in DIMENSION_DROPS["end"]:
-        cumulative += item["rate"]
-        if roll <= cumulative:
-            reward = item
-            break
-
-    item_key = f"{reward['emoji']} {reward['name']}"
-    inv[item_key] = inv.get(item_key, 0) + 1
-
-    embed = discord.Embed(
-        title="🌌 THẾ GIỚI END (THE END PORTAL)",
-        description=f"<@{user_id}> đã ném Mắt Ender tìm thấy Stronghold, vượt qua Ender Dragon và nhận được phần thưởng: **1x {item_key}**!",
-        color=8388736
-    )
-    await interaction.response.send_message(embed=embed)
-
-
-# Lệnh /help
-@client.tree.command(name="help", description="Hiển thị danh sách các lệnh của bot")
+@client.tree.command(name="help", description="Trung tâm hướng dẫn toàn tập hệ thống bot")
 async def help_cmd(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="📖 DANH SÁCH LỆNH HỆ THỐNG",
-        description="Dưới đây là toàn bộ lệnh khả dụng của bot:",
-        color=3092790
+        title="📖 TRUNG TÂM HƯỚNG DẪN HỆ THỐNG",
+        description="Chào mừng bạn đến với tổ hợp bot giải trí & tiện ích cao cấp phiên bản mới nhất!",
+        color=0x34495E,
+        timestamp=datetime.now(timezone.utc)
     )
     embed.add_field(
-        name="🛠️ Lệnh Hệ thống & Streak",
+        name="🔗 Quản lý, Tương tác & Minigame",
         value=(
-            "• `/streak [user]` - Kiểm tra chuỗi tương tác (Streak).\n"
-            "• `/invite-streak [user]` - Gửi lời mời tạo chuỗi Streak.\n"
-            "• `/setupkenh` - Cài đặt kênh nhận thông báo OctoLink.\n"
-            "• `/help` - Hiển thị bảng hướng dẫn này."
+            "• `!start @user` — Thách đấu nối từ cùng bạn bè (Chat trực tiếp) 🎮\n"
+            "• `/streak [user]` — Kiểm tra chuỗi tương tác\n"
+            "• `/setupkenh` — Cài đặt kênh nhận thông báo link"
         ),
         inline=False
     )
-    embed.add_field(
-        name="⛏️ Lệnh Minecraft Mini-Game",
-        value=(
-            "• `/mine` - Đào mỏ kiếm tài nguyên (Đất, Đá, Sắt, Kim Cương).\n"
-            "• `/inventory` - Kiểm tra balo/túi đồ cá nhân.\n"
-            "• `/craft` - Chế tạo trang bị, công cụ từ nguyên liệu.\n"
-            "• `/hunt` - Đi săn quái vật (Zombie, Skeleton, Creeper,...).\n"
-            "• `/nether` - Đi xuống Địa ngục tìm tài nguyên quý.\n"
-            "• `/end` - Săn Rồng End và khám phá thế giới End."
-        ),
-        inline=False
-    )
-    embed.set_footer(text="by ph.huyy")
-    
+    embed.set_footer(text="Developed by ph.huyy • Premium UI Edition", icon_url=interaction.client.user.display_avatar.url)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-# ── BACKGROUND TASK QUÉT OCTOLINK VÀ THÔNG BÁO ─────────────────────────────
+# ── BACKGROUND TASK OCTOLINK ───────────────────────────────────────────────
 OCTOLINK_API_KEY = os.environ.get("OCTOLINK_API_KEY", "1617ae1eea0cf96a7f9312494a10b35507b65e3f")
 last_known_clicks = {}
 
 async def fetch_octolink_stats():
-    if not OCTOLINK_API_KEY:
-        return None
-    url = f"https://octolink.vip/api?api={OCTOLINK_API_KEY}&action=stats"
+    if not OCTOLINK_API_KEY: return None
     try:
         loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, lambda: requests.get(url, timeout=10))
-        if response.status_code == 200:
-            return response.json()
-    except Exception:
-        pass
+        res = await loop.run_in_executor(None, lambda: requests.get(f"https://octolink.vip/api?api={OCTOLINK_API_KEY}&action=stats", timeout=10))
+        if res.status_code == 200: return res.json()
+    except Exception: pass
     return None
 
 @tasks.loop(seconds=60)
 async def octolink_notification_task():
     data = await fetch_octolink_stats()
-    if not data or not isinstance(data, dict):
-        return
-
-    links = data.get("links", [])
+    if not data or not isinstance(data, dict): return
     config = load_config()
 
-    for link in links:
+    for link in data.get("links", []):
         short_id = link.get("id") or link.get("short_url")
-        current_clicks = link.get("clicks", 0)
+        clicks = link.get("clicks", 0)
         long_url = link.get("url", "Không rõ")
 
-        if short_id in last_known_clicks:
-            if current_clicks > last_known_clicks[short_id]:
-                new_passes = current_clicks - last_known_clicks[short_id]
-                
-                embed = discord.Embed(
-                    title="🔗 Phát hiện lượt vượt link mới!",
-                    description="Có người vừa vượt thành công link rút gọn của bạn!",
-                    color=65280
-                )
-                embed.add_field(name="Link gốc", value=f"[Bấm vào đây]({long_url})", inline=False)
-                embed.add_field(name="Tổng số lượt vượt", value=f"`{current_clicks}` (+{new_passes} mới)", inline=True)
-                embed.set_footer(text=f"OctoLink System • ID: {short_id}")
+        if short_id in last_known_clicks and clicks > last_known_clicks[short_id]:
+            new_passes = clicks - last_known_clicks[short_id]
+            embed = discord.Embed(
+                title="🔗 PHÁT HIỆN LƯỢT VƯỢT LINK MỚI",
+                description="Có người vừa vượt thành công đường dẫn rút gọn của bạn!",
+                color=0x00FF00,
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.add_field(name="🌐 Link gốc", value=f"[Nhấn để truy cập]({long_url})", inline=False)
+            embed.add_field(name="📈 Thống kê lượt vượt", value=f"`{clicks}` tổng cộng (`+{new_passes}` mới)", inline=True)
+            embed.set_footer(text=f"OctoLink Tracking System • ID: {short_id}")
 
-                for guild_id_str, guild_data in config.items():
-                    channel_id = guild_data.get("channel_id")
-                    if channel_id:
-                        channel = client.get_channel(int(channel_id))
-                        if channel:
-                            try:
-                                await channel.send(embed=embed)
-                            except Exception:
-                                pass
-
-        last_known_clicks[short_id] = current_clicks
+            for _, g_data in config.items():
+                ch_id = g_data.get("channel_id")
+                if ch_id:
+                    ch = client.get_channel(int(ch_id))
+                    if ch:
+                        try: await ch.send(embed=embed)
+                        except Exception: pass
+        last_known_clicks[short_id] = clicks
 
 @octolink_notification_task.before_loop
-async def before_octolink_task():
+async def before_octolink():
     await client.wait_until_ready()
 
 
 if __name__ == "__main__":
     bot_token = os.environ.get("BOT_TOKEN", "").strip()
     if not bot_token:
-        print("[ LỖI ] Chưa cấu hình Bot Token trong biến môi trường BOT_TOKEN!")
+        print("[ LỖI ] Chưa cấu hình biến môi trường BOT_TOKEN!")
         exit(1)
     client.run(bot_token)
