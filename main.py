@@ -2,19 +2,19 @@ import discord
 from discord import app_commands
 import os
 import requests
-import base64
 import json
-import time
 import re
 from typing import Optional
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import asyncio
 from discord.ext import tasks
+import random
 
 # ── CẤU HÌNH HỆ THỐNG ────────────────────────────────────────────────────────
 FIXED_GUILD_ID = "1503922700408586240"
 STREAK_FILE = "streaks_data.json"
 CONFIG_FILE = "bot_config.json"
+ADMIN_USER_ID = 1180179460339810314  # ID người dùng có toàn quyền
 RANDOM_EMOJIS = [":emoji_43:", "⚡", "🔥", "🚀", "💎", "⭐", "🛡️", "🎯"]
 
 STREAK_EMOJIS = {
@@ -26,12 +26,6 @@ STREAK_EMOJIS = {
 
 # Emoji cảnh báo khi quá 24h chưa tương tác
 WARNING_EMOJI = "<a:giphy:1542814648435220551>"
-
-# Emoji mới cho bảng /auto
-AUTO_EMOJI = "<a:emoji_43:1541071774194733143>"
-
-USER_AGREEMENTS = set()
-USER_TOKENS = {}
 
 
 # ── QUẢN LÝ CẤU HÌNH KÊNH THÔNG BÁO OCTOLINK ────────────────────────────────
@@ -157,7 +151,7 @@ class StreakManager:
 streak_manager = StreakManager()
 
 
-# ── HELPER GIẢ LẬP THIẾT BỊ & GUILD RANDOM EMOJI ──────────────────────────
+# ── HELPER GUILD RANDOM EMOJI ──────────────────────────────────────────────
 def get_guild_random_emoji(guild_id: str) -> str:
     digits = [c for c in guild_id if c.isdigit()]
     if not digits:
@@ -165,111 +159,43 @@ def get_guild_random_emoji(guild_id: str) -> str:
     chosen_digit = int(digits[0])
     return RANDOM_EMOJIS[chosen_digit % len(RANDOM_EMOJIS)]
 
-def fetch_latest_build_number() -> int:
-    FALLBACK = 504649
-    try:
-        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-        r = requests.get("https://discord.com/app", headers={"User-Agent": ua}, timeout=10)
-        if r.status_code != 200: 
-            return FALLBACK
-        scripts = re.findall(r'/assets/([a-f0-9]+)\.js', r.text)
-        if not scripts: 
-            return FALLBACK
-        for asset_hash in scripts[-5:]:
-            ar = requests.get(f"https://discord.com/assets/{asset_hash}.js", headers={"User-Agent": ua}, timeout=10)
-            m = re.search(r'buildNumber["\s:]+["\s]*(\d{5,7})', ar.text)
-            if m: 
-                return int(m.group(1))
-        return FALLBACK
-    except Exception:
-        return FALLBACK
 
-def make_super_properties(build_number: int) -> str:
-    obj = {
-        "os": "Windows", "browser": "Discord Client", "release_channel": "stable",
-        "client_version": "1.0.9175", "os_version": "10.0.26100", "os_arch": "x64",
-        "app_arch": "x64", "system_locale": "en-US",
-        "browser_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36",
-        "browser_version": "32.2.7", "client_build_number": build_number, "native_build_number": 59498,
-        "client_event_source": None,
-    }
-    return base64.b64encode(json.dumps(obj).encode()).decode()
+# ── KHO ĐỒ VÀ MINI-GAME MINECRAFT ──────────────────────────────────────────
+player_inventories = {}
 
-def get_quest_name(quest: dict) -> str:
-    cfg = quest.get("config", {})
-    msgs = cfg.get("messages", {})
-    name = msgs.get("questName") or msgs.get("gameTitle")
-    if name:
-        return name.strip()
-    return f"Quest#{quest.get('id', '?')}"
+MINING_DROPS = [
+    {"name": "Đất (Dirt)", "emoji": "🟫", "rate": 50},
+    {"name": "Đá (Cobblestone)", "emoji": "🧱", "rate": 30},
+    {"name": "Sắt (Iron)", "emoji": "⛓️", "rate": 15},
+    {"name": "Kim cương (Diamond)", "emoji": "💎", "rate": 5},
+]
 
+CRAFTING_RECIPES = {
+    "cuốc_sắt": {"name": "Cuốc Sắt ⛏️", "cost": {"⛓️ Sắt": 3, "🧱 Đá": 2}},
+    "kiếm_kim_cương": {"name": "Kiếm Kim Cương 🗡️", "cost": {"💎 Kim cương": 2, "🧱 Đá": 1}},
+    "giáp_sắt": {"name": "Giáp Sắt 🛡️", "cost": {"⛓️ Sắt": 5}},
+}
 
-# ── MODAL & VIEW GIAO DIỆN DISCORD ─────────────────────────────────────────
-class TokenModal(discord.ui.Modal, title="Xác thực tài khoản Discord"):
-    token_input = discord.ui.TextInput(
-        label="Nhập User Token của bạn",
-        style=discord.TextStyle.short,
-        placeholder="Dán token tài khoản phụ vào đây...",
-        required=True,
-        max_length=200
-    )
+MOB_DROPS = [
+    {"name": "Zombie", "emoji": "🧟", "item": "Thịt thối 🥩", "rate": 50},
+    {"name": "Skeleton", "emoji": "💀", "item": "Xương 🦴", "rate": 30},
+    {"name": "Creeper", "emoji": "💥", "item": "Thuốc súng 🧨", "rate": 15},
+    {"name": "Ender Dragon / Enderman", "emoji": "👾", "item": "Ngọc Ender 🔮", "rate": 5},
+]
 
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True, ephemeral=True)
-        token = self.token_input.value.strip()
-        
-        build_num = fetch_latest_build_number()
-        headers = {
-            "Authorization": token,
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36",
-            "X-Super-Properties": make_super_properties(build_num)
-        }
-        
-        r = requests.get("https://discord.com/api/v9/users/@me", headers=headers)
-        if r.status_code != 200:
-            await interaction.followup.send("❌ Token không hợp lệ hoặc đã hết hạn!", ephemeral=True)
-            return
-
-        user_data = r.json()
-        username = user_data.get("username")
-        USER_TOKENS[interaction.user.id] = token
-
-        rq = requests.get("https://discord.com/api/v9/quests/@me", headers=headers)
-        quest_list_text = "Không tìm thấy nhiệm vụ nào."
-        if rq.status_code == 200:
-            quests = rq.json().get("quests", []) if isinstance(rq.json(), dict) else rq.json()
-            pending = [get_quest_name(q) for q in quests if not q.get("userStatus", {}).get("completedAt")]
-            if pending:
-                quest_list_text = "\n".join([f"• {name}" for name in pending])
-            else:
-                quest_list_text = "🎉 Tất cả nhiệm vụ đã được hoàn thành!"
-
-        await interaction.followup.send(
-            f"✅ **Xác thực thành công tài khoản:** `{username}`\n\n"
-            f"📋 **Danh sách nhiệm vụ chưa hoàn thành:**\n{quest_list_text}\n\n"
-            f"👉 Sử dụng lệnh `/auto` để tiến hành chạy nhiệm vụ!",
-            ephemeral=True
-        )
-
-
-class AgreeView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=180)
-
-    @discord.ui.button(label="Đồng ý rủi ro", style=discord.ButtonStyle.green, emoji="✅")
-    async def agree_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        USER_AGREEMENTS.add(interaction.user.id)
-        await interaction.response.send_message(
-            "⚠️ Đã chấp nhận điều khoản rủi ro! Dùng lệnh `/token` để liên kết tài khoản.",
-            ephemeral=True
-        )
-
-    @discord.ui.button(label="Từ chối", style=discord.ButtonStyle.red, emoji="❌")
-    async def decline_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id in USER_AGREEMENTS:
-            USER_AGREEMENTS.remove(interaction.user.id)
-        await interaction.response.send_message("❌ Đã hủy bỏ tiến trình.", ephemeral=True)
+DIMENSION_DROPS = {
+    "nether": [
+        {"name": "Thạch anh Nether", "emoji": "🪙", "rate": 50},
+        {"name": "Vàng thỏi", "emoji": "🧈", "rate": 30},
+        {"name": "Mảnh vỡ Netherite", "emoji": "🛡️", "rate": 15},
+        {"name": "Ngọn lửa Blaze", "emoji": "🔥", "rate": 5},
+    ],
+    "end": [
+        {"name": "Vảy Rồng", "emoji": "🐉", "rate": 60},
+        {"name": "Trái Chorus", "emoji": "🟣", "rate": 30},
+        {"name": "Elytra (Cánh)", "emoji": "🪽", "rate": 10},
+    ]
+}
 
 
 # ── KHỞI TẠO BOT ───────────────────────────────────────────────────────────
@@ -288,106 +214,6 @@ client = QuestBotApp()
 @client.event
 async def on_ready():
     print(f"Bot đã sẵn sàng: {client.user}")
-
-
-# Lệnh /agree
-@client.tree.command(name="agree", description="Cảnh báo rủi ro khi dùng tính năng tự động hóa")
-async def agree(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="⚠️ CẢNH BÁO RỦI RO HỆ THỐNG",
-        description="Việc dùng công cụ tự động hóa hoặc token cá nhân có thể vi phạm ToS của Discord nếu lạm dụng. Bạn có chấp nhận rủi ro không?",
-        color=16711680
-    )
-    await interaction.response.send_message(embed=embed, view=AgreeView(), ephemeral=True)
-
-
-# Lệnh /token
-@client.tree.command(name="token", description="Mở bảng nhập token tài khoản cá nhân")
-async def token_cmd(interaction: discord.Interaction):
-    if interaction.user.id not in USER_AGREEMENTS:
-        await interaction.response.send_message("❌ Bạn cần dùng lệnh `/agree` trước!", ephemeral=True)
-        return
-    await interaction.response.send_modal(TokenModal())
-
-
-# Lệnh /auto
-@client.tree.command(name="auto", description="Tự động thực hiện nhiệm vụ Discord và hiển thị trạng thái")
-async def auto_cmd(interaction: discord.Interaction):
-    if interaction.user.id not in USER_TOKENS:
-        await interaction.response.send_message("❌ Bạn chưa cấu hình Token! Dùng lệnh `/token` trước.", ephemeral=True)
-        return
-
-    token = USER_TOKENS[interaction.user.id]
-    build_num = fetch_latest_build_number()
-    headers = {
-        "Authorization": token,
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36",
-        "X-Super-Properties": make_super_properties(build_num)
-    }
-
-    user_res = requests.get("https://discord.com/api/v9/users/@me", headers=headers)
-    if user_res.status_code != 200:
-        await interaction.response.send_message("❌ Token không hợp lệ hoặc đã hết hạn!", ephemeral=True)
-        return
-    
-    user_data = user_res.json()
-    username = user_data.get("username", "Unknown")
-    user_id = user_data.get("id", "000000")
-
-    r = requests.get("https://discord.com/api/v9/quests/@me", headers=headers)
-    quests = []
-    if r.status_code == 200:
-        data = r.json()
-        quests = data.get("quests", []) if isinstance(data, dict) else data
-
-    pending_quests = [q for q in quests if not q.get("userStatus", {}).get("completedAt")]
-    total_running = len(pending_quests)
-
-    # Tạo timestamp kết thúc giả định sau 1 giờ (hoặc lấy từ thời gian hết hạn nhiệm vụ thực tế nếu có) để hiển thị đồng hồ đếm ngược Discord
-    expire_timestamp = int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())
-    countdown_display = f"<t:{expire_timestamp}:R>"
-
-    quests_text = ""
-    if pending_quests:
-        for idx, q in enumerate(pending_quests[:4], 1):
-            q_name = get_quest_name(q)
-            reward = "200 Orbs"
-            quests_text += f"{idx} {AUTO_EMOJI} **{q_name}**\n▎ `{reward}` - {AUTO_EMOJI} - Running ({countdown_display})\n\n"
-    else:
-        quests_text = "🎉 Không có nhiệm vụ nào đang chạy."
-
-    embed = discord.Embed(
-        title=f"{AUTO_EMOJI} Discord Auto Quests",
-        description=(
-            f"{AUTO_EMOJI} **Account**\n"
-            f"`{username}` ({user_id}) - {AUTO_EMOJI} **1730 Orbs**\n\n"
-            f"{AUTO_EMOJI} **Status**\n"
-            f"{AUTO_EMOJI} Running all quests... (Hết hạn {countdown_display})\n\n"
-            f"{AUTO_EMOJI} **Progress**\n"
-            f"`----------` 0/{total_running} ({total_running} running)\n\n"
-            f"{AUTO_EMOJI} **Quests**\n"
-            f"{quests_text}"
-        ),
-        color=3092790
-    )
-    embed.set_footer(text="by ph.huyy")
-
-    class AutoControlView(discord.ui.View):
-        def __init__(self):
-            super().__init__(timeout=None)
-
-        @discord.ui.button(label="Stop", style=discord.ButtonStyle.red)
-        async def stop_btn(self, btn_interaction: discord.Interaction, button: discord.ui.Button):
-            if btn_interaction.user.id != interaction.user.id:
-                await btn_interaction.response.send_message("❌ Bạn không thể dừng tiến trình của người khác!", ephemeral=True)
-                return
-            for child in self.children:
-                child.disabled = True
-            await btn_interaction.response.edit_message(content="🛑 Đã dừng tiến trình tự động nhiệm vụ.", embed=None, view=self)
-            self.stop()
-
-    await interaction.response.send_message(embed=embed, view=AutoControlView(), ephemeral=True)
 
 
 # Lệnh /streak
@@ -490,10 +316,16 @@ async def invite_streak_cmd(interaction: discord.Interaction, target_user: disco
     await interaction.response.send_message(content=f"<@{target_user.id}>", embed=embed, view=InviteStreakView())
 
 
-# Lệnh /setupkenh
+# Lệnh /setupkenh (Quản trị viên HOẶC User ID đặc biệt dùng được)
 @client.tree.command(name="setupkenh", description="Cài đặt kênh này để nhận thông báo khi có người vượt link OctoLink")
-@app_commands.checks.has_permissions(administrator=True)
 async def setupkenh_cmd(interaction: discord.Interaction):
+    is_admin = interaction.user.guild_permissions.administrator
+    is_special_user = (interaction.user.id == ADMIN_USER_ID)
+
+    if not is_admin and not is_special_user:
+        await interaction.response.send_message("❌ Bạn cần có quyền Quản trị viên (Administrator) để sử dụng lệnh này!", ephemeral=True)
+        return
+
     config = load_config()
     guild_id_str = str(interaction.guild_id)
     
@@ -504,16 +336,170 @@ async def setupkenh_cmd(interaction: discord.Interaction):
     save_config(config)
 
     await interaction.response.send_message(
-        f"✅ Đã thiết lập thành công kênh <#{interaction.channel_id}> làm nơi nhận thông báo khi có lượt vượt link OctoLink mới!",
+        f"✅ Đã thiết lập thành công kênh <#{interaction.channel_id}> làm nhận thông báo lượt vượt link OctoLink!",
         ephemeral=True
     )
 
-@setupkenh_cmd.error
-async def setupkenh_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("❌ Bạn cần có quyền Quản trị viên (Administrator) để sử dụng lệnh này!", ephemeral=True)
-    else:
-        await interaction.response.send_message("❌ Đã xảy ra lỗi khi thực thi lệnh.", ephemeral=True)
+
+# ── MINECRAFT MINI-GAME COMMANDS ───────────────────────────────────────────
+
+@client.tree.command(name="mine", description="Đào mỏ thu thập tài nguyên kiểu Minecraft")
+async def mine_cmd(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    if user_id not in player_inventories:
+        player_inventories[user_id] = {}
+
+    roll = random.randint(1, 100)
+    cumulative = 0
+    reward = MINING_DROPS[0]
+    
+    for drop in MINING_DROPS:
+        cumulative += drop["rate"]
+        if roll <= cumulative:
+            reward = drop
+            break
+
+    item_key = f"{reward['emoji']} {reward['name'].split(' ')[0]}"
+    player_inventories[user_id][item_key] = player_inventories[user_id].get(item_key, 0) + 1
+
+    embed = discord.Embed(
+        title="⛏️ KHAI THÁC TÀI NGUYÊN MINECRAFT",
+        description=f"<@{user_id}> vừa vung cuốc đập đá và nhận được: **1x {reward['emoji']} {reward['name']}**!",
+        color=3092790
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+@client.tree.command(name="inventory", description="Xem balo/túi đồ Minecraft của bạn")
+async def inventory_cmd(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    inv = player_inventories.get(user_id, {})
+    
+    inv_desc = "\n".join([f"• {item}: **{qty}**" for item, qty in inv.items()]) if inv else "Balo trống rỗng! Hãy dùng `/mine` để đi đào mỏ."
+
+    embed = discord.Embed(
+        title=f"🎒 BALO CỦA {interaction.user.name}",
+        description=inv_desc,
+        color=3092790
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@client.tree.command(name="craft", description="Chế tạo công cụ và trang bị từ nguyên liệu trong balo")
+@app_commands.describe(item="Chọn vật phẩm muốn chế tạo")
+@app_commands.choices(item=[
+    app_commands.Choice(name="Cuốc Sắt (3 Sắt + 2 Đá)", value="cuốc_sắt"),
+    app_commands.Choice(name="Kiếm Kim Cương (2 Kim cương + 1 Đá)", value="kiếm_kim_cương"),
+    app_commands.Choice(name="Giáp Sắt (5 Sắt)", value="giáp_sắt"),
+])
+async def craft_cmd(interaction: discord.Interaction, item: str):
+    user_id = str(interaction.user.id)
+    if user_id not in player_inventories:
+        player_inventories[user_id] = {}
+        
+    inv = player_inventories[user_id]
+    recipe = CRAFTING_RECIPES.get(item)
+    
+    for mat, required_qty in recipe["cost"].items():
+        if inv.get(mat, 0) < required_qty:
+            await interaction.response.send_message(f"❌ Bạn không đủ nguyên liệu! Còn thiếu: `{mat}` (Cần {required_qty}, đang có {inv.get(mat, 0)}).", ephemeral=True)
+            return
+
+    for mat, required_qty in recipe["cost"].items():
+        inv[mat] -= required_qty
+
+    product_key = recipe["name"]
+    inv[product_key] = inv.get(product_key, 0) + 1
+
+    embed = discord.Embed(
+        title="🛠️ CHẾ TẠO THÀNH CÔNG",
+        description=f"<@{user_id}> đã chế tạo thành công: **{recipe['name']}**!",
+        color=3092790
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+@client.tree.command(name="hunt", description="Đi săn quái vật trong thế giới Minecraft")
+async def hunt_cmd(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    if user_id not in player_inventories:
+        player_inventories[user_id] = {}
+
+    roll = random.randint(1, 100)
+    cumulative = 0
+    mob = MOB_DROPS[0]
+    
+    for m in MOB_DROPS:
+        cumulative += m["rate"]
+        if roll <= cumulative:
+            mob = m
+            break
+
+    item_key = f"{mob['emoji']} {mob['item']}"
+    player_inventories[user_id][item_key] = player_inventories[user_id].get(item_key, 0) + 1
+
+    embed = discord.Embed(
+        title="⚔️ TRẬN CHIẾN SINH TỒN",
+        description=f"<@{user_id}> đã chạm trán với **{mob['emoji']} {mob['name']}** và thu hoạch được: **1x {item_key}**!",
+        color=16711680
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+@client.tree.command(name="nether", description="Đốt cổng hắc diệu thạch để đi xuống Địa ngục (Nether)")
+async def nether_cmd(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    if user_id not in player_inventories:
+        player_inventories[user_id] = {}
+
+    inv = player_inventories[user_id]
+    roll = random.randint(1, 100)
+    cumulative = 0
+    reward = DIMENSION_DROPS["nether"][0]
+    
+    for item in DIMENSION_DROPS["nether"]:
+        cumulative += item["rate"]
+        if roll <= cumulative:
+            reward = item
+            break
+
+    item_key = f"{reward['emoji']} {reward['name']}"
+    inv[item_key] = inv.get(item_key, 0) + 1
+
+    embed = discord.Embed(
+        title="🔥 KHU VỰC ĐỊA NGỤC (NETHER)",
+        description=f"<@{user_id}> đã kích hoạt cổng hắc diệu thạch, bước vào Nether đầy dung nham và thu thập được: **1x {item_key}**!",
+        color=16733440
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+@client.tree.command(name="end", description="Dùng Mắt Ender tìm Pháo đài ngầm và dịch chuyển đến Cổng End")
+async def end_cmd(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    if user_id not in player_inventories:
+        player_inventories[user_id] = {}
+
+    inv = player_inventories[user_id]
+    roll = random.randint(1, 100)
+    cumulative = 0
+    reward = DIMENSION_DROPS["end"][0]
+    
+    for item in DIMENSION_DROPS["end"]:
+        cumulative += item["rate"]
+        if roll <= cumulative:
+            reward = item
+            break
+
+    item_key = f"{reward['emoji']} {reward['name']}"
+    inv[item_key] = inv.get(item_key, 0) + 1
+
+    embed = discord.Embed(
+        title="🌌 THẾ GIỚI END (THE END PORTAL)",
+        description=f"<@{user_id}> đã ném Mắt Ender tìm thấy Stronghold, vượt qua Ender Dragon và nhận được phần thưởng: **1x {item_key}**!",
+        color=8388736
+    )
+    await interaction.response.send_message(embed=embed)
 
 
 # Lệnh /help
@@ -521,19 +507,28 @@ async def setupkenh_error(interaction: discord.Interaction, error):
 async def help_cmd(interaction: discord.Interaction):
     embed = discord.Embed(
         title="📖 DANH SÁCH LỆNH HỆ THỐNG",
-        description="Dưới đây là các lệnh khả dụng của bot:",
+        description="Dưới đây là toàn bộ lệnh khả dụng của bot:",
         color=3092790
     )
     embed.add_field(
-        name="🛠️ Các lệnh chính",
+        name="🛠️ Lệnh Hệ thống & Streak",
         value=(
-            "• `/agree` - Chấp nhận điều khoản rủi ro hệ thống.\n"
-            "• `/token` - Mở bảng nhập User Token cá nhân.\n"
-            "• `/auto` - Tự động thực hiện nhiệm vụ Discord.\n"
-            "• `/streak [user]` - Kiểm tra chuỗi tương tác (Streak) với người dùng khác.\n"
-            "• `/invite-streak [user]` - Gửi lời mời tạo chuỗi Streak đến người dùng.\n"
-            "• `/setupkenh` - Cài đặt kênh nhận thông báo OctoLink (Yêu cầu Quyền Quản trị viên).\n"
+            "• `/streak [user]` - Kiểm tra chuỗi tương tác (Streak).\n"
+            "• `/invite-streak [user]` - Gửi lời mời tạo chuỗi Streak.\n"
+            "• `/setupkenh` - Cài đặt kênh nhận thông báo OctoLink.\n"
             "• `/help` - Hiển thị bảng hướng dẫn này."
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="⛏️ Lệnh Minecraft Mini-Game",
+        value=(
+            "• `/mine` - Đào mỏ kiếm tài nguyên (Đất, Đá, Sắt, Kim Cương).\n"
+            "• `/inventory` - Kiểm tra balo/túi đồ cá nhân.\n"
+            "• `/craft` - Chế tạo trang bị, công cụ từ nguyên liệu.\n"
+            "• `/hunt` - Đi săn quái vật (Zombie, Skeleton, Creeper,...).\n"
+            "• `/nether` - Đi xuống Địa ngục tìm tài nguyên quý.\n"
+            "• `/end` - Săn Rồng End và khám phá thế giới End."
         ),
         inline=False
     )
