@@ -139,9 +139,10 @@ async def thongbao(interaction: discord.Interaction, title: str, content: str):
 
 
 # =========================================================================
-# PHẦN 3: CÁC LỆNH BAN, MUTE, AFK (DÙNG CHẤM THAN !) - EMBED ĐẸP
+# PHẦN 3: CÁC LỆNH QUẢN LÝ (BAN, UNBAN, MUTE, UNMUTE, AFK) - EMBED ĐẸP
 # =========================================================================
 
+# Lệnh !ban
 @bot.command(name="ban")
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason="Không có lý do"):
@@ -165,6 +166,37 @@ async def ban_error(ctx, error):
         await ctx.send(embed=discord.Embed(title="⚠️ Sai cú pháp", description="Ví dụ đúng: `!ban @User Vi phạm nội quy`", color=discord.Color.orange()))
 
 
+# Lệnh !unban (Dùng ID hoặc dạng Tên#Tag của người bị ban)
+@bot.command(name="unban")
+@commands.has_permissions(ban_members=True)
+async def unban(ctx, user_id: int, *, reason="Không có lý do"):
+    """Gỡ cấm thành viên bằng ID (!unban ID_người_dùng lý_do)"""
+    try:
+        user = await bot.fetch_user(user_id)
+        await ctx.guild.unban(user, reason=reason)
+        
+        embed = discord.Embed(
+            title="🔓 Thành viên đã được Unban",
+            description=f"**{user.name}** (ID: `{user.id}`) đã được gỡ cấm khỏi máy chủ.",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Lý do", value=reason, inline=False)
+        embed.set_footer(text=f"Người thực hiện: {ctx.author.display_name}", icon_url=ctx.author.display_avatar.url)
+        await ctx.send(embed=embed)
+    except discord.NotFound:
+        await ctx.send(embed=discord.Embed(title="❌ Lỗi", description="Không tìm thấy người dùng này trong danh sách bị ban (hoặc ID không đúng).", color=discord.Color.red()))
+    except Exception as e:
+        await ctx.send(embed=discord.Embed(title="❌ Lỗi", description=str(e), color=discord.Color.red()))
+
+@unban.error
+async def unban_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send(embed=discord.Embed(title="⚠️ Thiếu quyền", description="Bạn cần quyền **Ban Members** để dùng lệnh này.", color=discord.Color.orange()))
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(embed=discord.Embed(title="⚠️ Sai cú pháp", description="Ví dụ đúng: `!unban 123456789012345678 Đã khiếu nại`", color=discord.Color.orange()))
+
+
+# Lệnh !mute
 @bot.command(name="mute")
 @commands.has_permissions(moderate_members=True)
 async def mute(ctx, member: discord.Member, minutes: int, *, reason="Không có lý do"):
@@ -189,6 +221,31 @@ async def mute_error(ctx, error):
         await ctx.send(embed=discord.Embed(title="⚠️ Sai cú pháp", description="Ví dụ đúng: `!mute @User 10 Spam chat`", color=discord.Color.orange()))
 
 
+# Lệnh !unmute
+@bot.command(name="unmute")
+@commands.has_permissions(moderate_members=True)
+async def unmute(ctx, member: discord.Member, *, reason="Không có lý do"):
+    """Gỡ mute/timeout thành viên (!unmute @User lý_do)"""
+    await member.timeout(None, reason=reason)
+    
+    embed = discord.Embed(
+        title="🔊 Thành viên đã được Unmute",
+        description=f"**{member.mention}** đã được gỡ hình phạt cấm chat.",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="Lý do", value=reason, inline=False)
+    embed.set_footer(text=f"Người thực hiện: {ctx.author.display_name}", icon_url=ctx.author.display_avatar.url)
+    await ctx.send(embed=embed)
+
+@unmute.error
+async def unmute_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send(embed=discord.Embed(title="⚠️ Thiếu quyền", description="Bạn cần quyền **Moderate Members** để dùng lệnh này.", color=discord.Color.orange()))
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(embed=discord.Embed(title="⚠️ Sai cú pháp", description="Ví dụ đúng: `!unmute @User Hết án phạt`", color=discord.Color.orange()))
+
+
+# Lệnh !afk
 @bot.command(name="afk")
 async def afk(ctx, *, reason="Đang bận"):
     """Bật chế độ AFK (!afk lý_do)"""
