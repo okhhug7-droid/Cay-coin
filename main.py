@@ -1,437 +1,322 @@
 import discord
-from discord import app_commands
+from discord.ext import commands
+from io import BytesIO
+from PIL import Image, ImageDraw, ImageFont
 import os
-import requests
-import json
-import re
-from typing import Optional
-from datetime import datetime, timezone
-import asyncio
-from discord.ext import tasks
 
-# ── CẤU HÌNH HỆ THỐNG ────────────────────────────────────────────────────────
-FIXED_GUILD_ID = "1503922700408586240"
-STREAK_FILE = "streaks_data.json"
-CONFIG_FILE = "bot_config.json"
-ADMIN_USER_ID = 1180179460339810314  # ID người dùng có toàn quyền
-RANDOM_EMOJIS = [":emoji_43:", "⚡", "🔥", "🚀", "💎", "⭐", "🛡️", "🎯"]
+# Khởi tạo bot với Intents cần thiết
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
 
-STREAK_EMOJIS = {
-    "tier_1": "<a:emoji_46:1542730770966122517>",  # 1 - 10 ngày
-    "tier_2": "<a:emoji_47:1542730872820604938>",  # 10 - 30 ngày
-    "tier_3": "<a:emoji_47:1542730906173710396>",  # 30 - 60 ngày
-    "tier_4": "<a:emoji_48:1542730932283510784>"   # 60 ngày trở lên
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# Lưu trữ danh sách người dùng đang AFK
+afk_users = {}
+
+# Cấu hình nội dung Welcome mặc định
+WELCOME_CONFIG = {
+    "channel_id": None,
+    "message": "Chào mừng con vk {name} là thành viên thứ {number} của **{server}**! 🎉",
+    "background_image": "welcome_bg.png"
 }
 
-# Emoji cảnh báo khi quá 24h chưa tương tác
-WARNING_EMOJI = "<a:giphy:1542814648435220551>"
+# ID của Admin đặc biệt được phép dùng lệnh thông báo
+SPECIAL_ADMIN_ID = 1180179460339810314
 
-
-# ── QUẢN LÝ CẤU HÌNH KÊNH THÔNG BÁO OCTOLINK ────────────────────────────────
-def load_config() -> dict:
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
-
-def save_config(data: dict):
-    try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-    except Exception:
-        pass
-
-
-# ── HỆ THỐNG QUẢN LÝ CHUỖI TƯƠNG TÁC (STREAK SYSTEM) ───────────────────────
-class StreakManager:
-    def __init__(self, filepath: str = STREAK_FILE):
-        self.filepath = filepath
-        self.data = self.load_data()
-
-    def load_data(self) -> dict:
-        if os.path.exists(self.filepath):
-            try:
-                with open(self.filepath, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
-
-    def save_data(self):
-        try:
-            with open(self.filepath, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=4, ensure_ascii=False)
-        except Exception:
-            pass
-
-    def _get_pair_key(self, user1: str, user2: str) -> str:
-        sorted_users = sorted([str(user1), str(user2)])
-        return f"{sorted_users[0]}_{sorted_users[1]}"
-
-    def get_base_streak_emoji(self, streak_days: int) -> str:
-        if 1 <= streak_days < 10:
-            return STREAK_EMOJIS["tier_1"]
-        elif 10 <= streak_days < 30:
-            return STREAK_EMOJIS["tier_2"]
-        elif 30 <= streak_days <= 60:
-            return STREAK_EMOJIS["tier_3"]
-        elif streak_days > 60:
-            return STREAK_EMOJIS["tier_4"]
-        else:
-            return STREAK_EMOJIS["tier_1"]
-
-    def get_current_streak_emoji(self, record: dict) -> str:
-        last_timestamp_str = record.get("last_timestamp")
-        if last_timestamp_str:
-            last_time = datetime.fromisoformat(last_timestamp_str)
-            now = datetime.now(timezone.utc)
-            diff_hours = (now - last_time).total_seconds() / 3600
-            if diff_hours > 24:
-                return WARNING_EMOJI
-        
-        return self.get_base_streak_emoji(record.get("streak", 1))
-
-    def record_interaction(self, user1: str, user2: str) -> dict:
-        if user1 == user2:
-            return {"error": "Không thể tự tạo chuỗi với chính mình!"}
-
-        pair_key = self._get_pair_key(user1, user2)
-        now = datetime.now(timezone.utc)
-        today_str = now.strftime("%Y-%m-%d")
-
-        if pair_key not in self.data:
-            self.data[pair_key] = {
-                "users": [str(user1), str(user2)],
-                "streak": 1,
-                "last_interaction_date": today_str,
-                "last_interactor": str(user1),
-                "last_timestamp": now.isoformat()
-            }
-            record = self.data[pair_key]
-            record["emoji"] = self.get_current_streak_emoji(record)
-            self.save_data()
-            return record
-
-        record = self.data[pair_key]
-        last_date_str = record.get("last_interaction_date", today_str)
-        last_date = datetime.strptime(last_date_str, "%Y-%m-%d").date()
-        current_date = now.date()
-        diff_days = (current_date - last_date).days
-
-        last_interactor = record.get("last_interactor")
-
-        if str(user1) != last_interactor:
-            if diff_days == 0:
-                record["last_timestamp"] = now.isoformat()
-            elif diff_days == 1:
-                record["streak"] += 1
-                record["last_interaction_date"] = today_str
-                record["last_interactor"] = str(user1)
-                record["last_timestamp"] = now.isoformat()
-            else:
-                record["streak"] = 1
-                record["last_interaction_date"] = today_str
-                record["last_interactor"] = str(user1)
-                record["last_timestamp"] = now.isoformat()
-        else:
-            if diff_days > 1:
-                record["streak"] = 0
-                record["last_interaction_date"] = today_str
-                record["last_timestamp"] = now.isoformat()
-
-        record["emoji"] = self.get_current_streak_emoji(record)
-        self.save_data()
-        return record
-
-    def get_user_pair_with(self, user1: str, user2: str) -> Optional[str]:
-        pair_key = self._get_pair_key(user1, user2)
-        if pair_key in self.data:
-            return pair_key
-        return None
-
-
-streak_manager = StreakManager()
-
-
-# ── HELPER GUILD RANDOM EMOJI ──────────────────────────────────────────────
-def get_guild_random_emoji(guild_id: str) -> str:
-    digits = [c for c in guild_id if c.isdigit()]
-    if not digits:
-        return RANDOM_EMOJIS[0]
-    chosen_digit = int(digits[0])
-    return RANDOM_EMOJIS[chosen_digit % len(RANDOM_EMOJIS)]
-
-
-# ── KHỞI TẠO BOT ───────────────────────────────────────────────────────────
-class QuestBotApp(discord.Client):
-    def __init__(self):
-        intents = discord.Intents.default()
-        intents.message_content = True
-        intents.guild_reactions = True
-        
-        super().__init__(intents=intents)
-        self.tree = app_commands.CommandTree(self)
-
-    async def setup_hook(self):
-        await self.tree.sync()
-        if not octolink_notification_task.is_running():
-            octolink_notification_task.start()
-
-client = QuestBotApp()
-
-@client.event
+@bot.event
 async def on_ready():
-    print(f"Bot đã sẵn sàng: {client.user}")
+    print(f"Bot đã đăng nhập thành công với tên: {bot.user}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"Đã đồng bộ thành công {len(synced)} lệnh slash (/).")
+    except Exception as e:
+        print(f"Lỗi đồng bộ lệnh slash: {e}")
 
 
-# ── SỰ KIỆN: THẢ EMOJI TÍNH TƯƠNG TÁC STREAK ───────────────────────────────
-@client.event
-async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
-    if user.bot:
+# =========================================================================
+# PHẦN 1: BẢNG NHẬP LIỆU (MODAL) VÀ LỆNH WELCOME (DÙNG SLASH /)
+# =========================================================================
+
+class WelcomeModal(discord.ui.Modal, title="Cài đặt hệ thống Welcome"):
+    message_input = discord.ui.TextInput(
+        label="Nội dung tin nhắn chào mừng",
+        style=discord.TextStyle.long,
+        placeholder="Nhập nội dung... Dùng {name}, {number}, {member}, {server}",
+        default=WELCOME_CONFIG["message"],
+        required=True,
+        max_length=1000
+    )
+
+    channel_input = discord.ui.TextInput(
+        label="ID Kênh hiển thị Welcome",
+        style=discord.TextStyle.short,
+        placeholder="Nhập ID kênh (Ví dụ: 123456789012345678)",
+        default=str(WELCOME_CONFIG["channel_id"]) if WELCOME_CONFIG["channel_id"] else "",
+        required=False,
+        max_length=20
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        new_msg = self.message_input.value
+        WELCOME_CONFIG["message"] = new_msg
+
+        channel_str = self.channel_input.value.strip()
+        channel_mention_text = "Không thay đổi / Giữ nguyên tự động quét"
+
+        if channel_str:
+            try:
+                ch_id = int(channel_str)
+                channel = interaction.guild.get_channel(ch_id)
+                if channel:
+                    WELCOME_CONFIG["channel_id"] = ch_id
+                    channel_mention_text = channel.mention
+                else:
+                    await interaction.response.send_message("⚠️ Nội dung đã lưu nhưng **ID Kênh không tồn tại** trong server này!", ephemeral=True)
+                    return
+            except ValueError:
+                await interaction.response.send_message("❌ ID kênh phải là một dãy số hợp lệ!", ephemeral=True)
+                return
+
+        embed = discord.Embed(
+            title="✨ Cập nhật cấu hình Welcome thành công",
+            description="Hệ thống đã ghi nhận các thay đổi mới của bạn.",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="💬 Mẫu tin nhắn mới", value=f"> {new_msg}", inline=False)
+        embed.add_field(name="📢 Kênh thông báo", value=channel_mention_text, inline=False)
+        embed.set_footer(text=f"Cập nhật bởi {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        embed = discord.Embed(title="❌ Lỗi", description=f"Đã xảy ra lỗi: {error}", color=discord.Color.red())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="welcome", description="Mở bảng cấu hình hệ thống chào mừng thành viên mới")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def welcome_command(interaction: discord.Interaction):
+    await interaction.response.send_modal(WelcomeModal())
+
+@welcome_command.error
+async def welcome_command_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+    if isinstance(error, discord.app_commands.MissingPermissions):
+        embed = discord.Embed(title="⛔ Từ chối truy cập", description="Bạn cần quyền **Quản trị viên (Administrator)** để sử dụng lệnh này.", color=discord.Color.red())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        embed = discord.Embed(title="❌ Lỗi", description=str(error), color=discord.Color.red())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# =========================================================================
+# PHẦN 2: LỆNH THÔNG BÁO (DÀNH CHO ID ĐẶC BIỆT & ADMIN)
+# =========================================================================
+
+@bot.tree.command(name="thongbao", description="Gửi bảng tin nhắn thông báo quan trọng đến kênh hiện tại")
+@discord.app_commands.describe(
+    title="Tiêu đề của bản thông báo",
+    content="Nội dung chi tiết thông báo"
+)
+async def thongbao(interaction: discord.Interaction, title: str, content: str):
+    if interaction.user.id != SPECIAL_ADMIN_ID and not interaction.user.guild_permissions.administrator:
+        embed_err = discord.Embed(
+            title="⛔ Từ chối quyền hạn",
+            description="Bạn không có quyền sử dụng lệnh thông báo này!",
+            color=discord.Color.red()
+        )
+        await interaction.response.send_message(embed=embed_err, ephemeral=True)
         return
 
-    message = reaction.message
-    if not message.author or message.author.bot:
+    embed = discord.Embed(
+        title=f"📢 {title}",
+        description=content,
+        color=discord.Color.from_rgb(255, 170, 0)
+    )
+    embed.set_footer(text=f"Thông báo bởi: {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+    
+    await interaction.response.send_message(content="@everyone", embed=embed)
+
+
+# =========================================================================
+# PHẦN 3: CÁC LỆNH BAN, MUTE, AFK (DÙNG CHẤM THAN !) - EMBED ĐẸP
+# =========================================================================
+
+@bot.command(name="ban")
+@commands.has_permissions(ban_members=True)
+async def ban(ctx, member: discord.Member, *, reason="Không có lý do"):
+    """Cấm một thành viên khỏi server (!ban @User lý_do)"""
+    await member.ban(reason=reason)
+    
+    embed = discord.Embed(
+        title="🔨 Thành viên đã bị Ban",
+        description=f"**{member.mention}** đã bị cấm khỏi máy chủ.",
+        color=discord.Color.red()
+    )
+    embed.add_field(name="Lý do", value=reason, inline=False)
+    embed.set_footer(text=f"Người thực hiện: {ctx.author.display_name}", icon_url=ctx.author.display_avatar.url)
+    await ctx.send(embed=embed)
+
+@ban.error
+async def ban_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send(embed=discord.Embed(title="⚠️ Thiếu quyền", description="Bạn cần quyền **Ban Members** để dùng lệnh này.", color=discord.Color.orange()))
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(embed=discord.Embed(title="⚠️ Sai cú pháp", description="Ví dụ đúng: `!ban @User Vi phạm nội quy`", color=discord.Color.orange()))
+
+
+@bot.command(name="mute")
+@commands.has_permissions(moderate_members=True)
+async def mute(ctx, member: discord.Member, minutes: int, *, reason="Không có lý do"):
+    """Mute thành viên (!mute @User số_phút lý_do)"""
+    duration = discord.utils.utcnow() + discord.timedelta(minutes=minutes)
+    await member.timeout(duration, reason=reason)
+    
+    embed = discord.Embed(
+        title="🔇 Thành viên đã bị Mute (Timeout)",
+        description=f"**{member.mention}** đã bị cấm chat trong **{minutes} phút**.",
+        color=discord.Color.gold()
+    )
+    embed.add_field(name="Lý do", value=reason, inline=False)
+    embed.set_footer(text=f"Người thực hiện: {ctx.author.display_name}", icon_url=ctx.author.display_avatar.url)
+    await ctx.send(embed=embed)
+
+@mute.error
+async def mute_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send(embed=discord.Embed(title="⚠️ Thiếu quyền", description="Bạn cần quyền **Moderate Members** để dùng lệnh này.", color=discord.Color.orange()))
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(embed=discord.Embed(title="⚠️ Sai cú pháp", description="Ví dụ đúng: `!mute @User 10 Spam chat`", color=discord.Color.orange()))
+
+
+@bot.command(name="afk")
+async def afk(ctx, *, reason="Đang bận"):
+    """Bật chế độ AFK (!afk lý_do)"""
+    afk_users[ctx.author.id] = reason
+    try:
+        await ctx.author.edit(nick=f"[AFK] {ctx.author.display_name}")
+    except discord.Forbidden:
+        pass
+    
+    embed = discord.Embed(
+        title="💤 Chế độ AFK đã bật",
+        description=f"{ctx.author.mention} đã chuyển sang trạng thái vắng mặt.",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Lý do", value=reason, inline=False)
+    await ctx.send(embed=embed)
+
+
+# =========================================================================
+# PHẦN 4: SỰ KIỆN GỬI WELCOME, PING BOT THẢ REACTION & QUẢN LÝ AFK
+# =========================================================================
+
+@bot.event
+async def on_member_join(member):
+    channel = None
+    if WELCOME_CONFIG["channel_id"]:
+        channel = member.guild.get_channel(WELCOME_CONFIG["channel_id"])
+    
+    if not channel:
+        for c in member.guild.text_channels:
+            if c.name in ["welcome", "chao-mung", "general", "chung"]:
+                channel = c
+                break
+        if not channel and member.guild.text_channels:
+            channel = member.guild.text_channels[0]
+
+    if not channel:
         return
 
-    author_id = str(message.author.id)
-    reactor_id = str(user.id)
+    try:
+        if os.path.exists(WELCOME_CONFIG["background_image"]):
+            bg = Image.open(WELCOME_CONFIG["background_image"]).resize((800, 400))
+        else:
+            bg = Image.new("RGB", (800, 400), color=(30, 144, 255))
 
-    if author_id == reactor_id:
-        return
+        draw = ImageDraw.Draw(bg)
+        
+        try:
+            font_title = ImageFont.truetype("arial.ttf", 40)
+            font_name = ImageFont.truetype("arial.ttf", 30)
+        except IOError:
+            font_title = ImageFont.load_default()
+            font_name = ImageFont.load_default()
 
-    pair_key = streak_manager.get_user_pair_with(author_id, reactor_id)
-    if pair_key:
-        streak_manager.record_interaction(reactor_id, author_id)
+        draw.text((400, 150), "WELCOME", fill=(255, 255, 255), anchor="mm", font=font_title)
+        draw.text((400, 220), member.name, fill=(255, 255, 0), anchor="mm", font=font_name)
+
+        buffer = BytesIO()
+        bg.save(buffer, format="PNG")
+        buffer.seek(0)
+        file = discord.File(buffer, filename="welcome.png")
+
+    except Exception as e:
+        print(f"Lỗi tạo ảnh welcome: {e}")
+        file = None
+
+    custom_message = WELCOME_CONFIG["message"].format(
+        name=member.name,
+        number=member.guild.member_count,
+        member=member.mention,
+        server=member.guild.name
+    )
+
+    if file:
+        await channel.send(content=custom_message, file=file)
+    else:
+        await channel.send(content=custom_message)
 
 
-# ── SỰ KIỆN: PING BOT PHẢN HỒI RANDOM EMOJI GUILD ───────────────────────────
-@client.event
-async def on_message(message: discord.Message):
+@bot.event
+async def on_message(message):
     if message.author.bot:
         return
 
-    if client.user in message.mentions:
-        guild_id_to_use = str(message.guild.id) if message.guild else FIXED_GUILD_ID
-        rand_emoji = get_guild_random_emoji(guild_id_to_use)
-        await message.reply(f"Xin chào! {rand_emoji}")
+    # 1. Thả emoji cảm xúc khi có người ping bot
+    if bot.user in message.mentions:
+        try:
+            emoji = discord.PartialEmoji(name="emoji_39", id=1538913815083622550)
+            await message.add_reaction(emoji)
+        except Exception as e:
+            print(f"Không thể thả reaction: {e}")
 
-
-# Lệnh /streak
-@client.tree.command(name="streak", description="Kiểm tra chuỗi tương tác (Streak) với người dùng khác")
-@app_commands.describe(target_user="Người bạn muốn kiểm tra chuỗi tương tác")
-async def streak_cmd(interaction: discord.Interaction, target_user: discord.Member):
-    user1 = str(interaction.user.id)
-    user2 = str(target_user.id)
-    
-    if user1 == user2:
-        await interaction.response.send_message("❌ Bạn không thể tạo chuỗi với chính mình!", ephemeral=True)
-        return
-
-    record = streak_manager.record_interaction(user1, user2)
-    streak_days = record.get("streak", 1)
-    streak_emoji = streak_manager.get_current_streak_emoji(record)
-    guild_rand_emoji = get_guild_random_emoji(str(interaction.guild_id) if interaction.guild else FIXED_GUILD_ID)
-
-    embed = discord.Embed(
-        title=f"{guild_rand_emoji} HỆ THỐNG CHUỖI TƯƠNG TÁC (STREAK)",
-        description=(
-            f"🤝 **Cặp đôi:** <@{user1}> & <@{target_user.id}>\n"
-            f"🔥 **Số ngày chuỗi hiện tại:** `{streak_days} ngày` {streak_emoji}\n\n"
-            f"**Quy định mốc Emoji Streak:**\n"
-            f"• **1 - 10 ngày:** {STREAK_EMOJIS['tier_1']}\n"
-            f"• **10 - 30 ngày:** {STREAK_EMOJIS['tier_2']}\n"
-            f"• **30 - 60 ngày:** {STREAK_EMOJIS['tier_3']}\n"
-            f"• **> 60 ngày:** {STREAK_EMOJIS['tier_4']}\n"
-            f"• **Quá 24h không tương tác:** {WARNING_EMOJI}\n\n"
-            f"⚠️ *Lưu ý: Quá 48h không tương tác chéo, chuỗi sẽ tự động reset về 0!*"
-        ),
-        color=3092790
-    )
-    embed.set_footer(text=f"Guild ID: {FIXED_GUILD_ID}")
-    
-    await interaction.response.send_message(embed=embed)
-
-
-# Lệnh /invite-streak
-@client.tree.command(name="invite-streak", description="Gửi lời mời tạo chuỗi tương tác (Streak) đến một người dùng")
-@app_commands.describe(target_user="Người bạn muốn mời tạo chuỗi streak")
-async def invite_streak_cmd(interaction: discord.Interaction, target_user: discord.Member):
-    user1 = str(interaction.user.id)
-    user2 = str(target_user.id)
-
-    if user1 == user2:
-        await interaction.response.send_message("❌ Bạn không thể mời chính mình!", ephemeral=True)
-        return
-
-    if target_user.bot:
-        await interaction.response.send_message("❌ Bạn không thể tạo chuỗi với bot!", ephemeral=True)
-        return
-
-    class InviteStreakView(discord.ui.View):
-        def __init__(self):
-            super().__init__(timeout=60)
-            self.value = None
-
-        @discord.ui.button(label="Đồng ý", style=discord.ButtonStyle.green, emoji="🤝")
-        async def accept(self, button_interaction: discord.Interaction, button: discord.ui.Button):
-            if button_interaction.user.id != target_user.id:
-                await button_interaction.response.send_message("❌ Chỉ người được mời mới có thể chấp nhận!", ephemeral=True)
-                return
-            
-            record = streak_manager.record_interaction(user1, user2)
-            streak_days = record.get("streak", 1)
-            streak_emoji = streak_manager.get_current_streak_emoji(record)
-
-            for child in self.children:
-                child.disabled = True
-            
-            await button_interaction.response.edit_message(
-                content=f"✅ **<@{target_user.id}>** đã đồng ý lời mời tạo chuỗi Streak với **<@{interaction.user.id}>**! Chuỗi hiện tại: `{streak_days} ngày` {streak_emoji}",
-                view=self
-            )
-            self.stop()
-
-        @discord.ui.button(label="Từ chối", style=discord.ButtonStyle.red, emoji="❌")
-        async def decline(self, button_interaction: discord.Interaction, button: discord.ui.Button):
-            if button_interaction.user.id != target_user.id:
-                await button_interaction.response.send_message("❌ Chỉ người được mời mới có thể từ chối!", ephemeral=True)
-                return
-
-            for child in self.children:
-                child.disabled = True
-
-            await button_interaction.response.edit_message(
-                content=f"❌ **<@{target_user.id}>** đã từ chối lời mời tạo chuỗi Streak từ **<@{interaction.user.id}>**.",
-                view=self
-            )
-            self.stop()
-
-    embed = discord.Embed(
-        title="💌 LỜI MỜI TẠO CHUỖI STREAK",
-        description=f"Hey <@{target_user.id}>! <@{interaction.user.id}> muốn bắt đầu chuỗi tương tác (Streak) với bạn. Bạn có đồng ý không?",
-        color=3092790
-    )
-    embed.set_footer(text="Lời mời có hiệu lực trong 60 giây.")
-
-    await interaction.response.send_message(content=f"<@{target_user.id}>", embed=embed, view=InviteStreakView())
-
-
-# Lệnh /setupkenh (Cho phép Quản trị viên HOẶC User ID đặc biệt sử dụng)
-@client.tree.command(name="setupkenh", description="Cài đặt kênh này để nhận thông báo khi có người vượt link OctoLink")
-async def setupkenh_cmd(interaction: discord.Interaction):
-    is_admin = interaction.user.guild_permissions.administrator
-    is_special_user = (interaction.user.id == ADMIN_USER_ID)
-
-    if not is_admin and not is_special_user:
-        await interaction.response.send_message("❌ Bạn cần có quyền Quản trị viên (Administrator) để sử dụng lệnh này!", ephemeral=True)
-        return
-
-    config = load_config()
-    guild_id_str = str(interaction.guild_id)
-    
-    if guild_id_str not in config:
-        config[guild_id_str] = {}
+    # 2. Tắt AFK khi người đó gửi tin nhắn
+    if message.author.id in afk_users:
+        del afk_users[message.author.id]
+        try:
+            current_name = message.author.display_name
+            if current_name.startswith("[AFK] "):
+                await message.author.edit(nick=current_name[6:])
+        except discord.Forbidden:
+            pass
         
-    config[guild_id_str]["channel_id"] = interaction.channel_id
-    save_config(config)
+        embed = discord.Embed(
+            description=f"👋 Chào mừng {message.author.mention} đã quay trở lại! Đã tắt chế độ AFK.",
+            color=discord.Color.green()
+        )
+        await message.channel.send(embed=embed)
 
-    await interaction.response.send_message(
-        f"✅ Đã thiết lập thành công kênh <#{interaction.channel_id}> làm nơi nhận thông báo khi có lượt vượt link OctoLink mới!",
-        ephemeral=True
-    )
+    # 3. Thông báo khi có người tag người đang AFK
+    for mention in message.mentions:
+        if mention.id in afk_users:
+            reason = afk_users[mention.id]
+            embed = discord.Embed(
+                description=f"💤 Người dùng {mention.mention} hiện đang AFK với lý do: **{reason}**",
+                color=discord.Color.orange()
+            )
+            await message.channel.send(embed=embed)
 
-
-# Lệnh /help
-@client.tree.command(name="help", description="Hiển thị danh sách các lệnh của bot")
-async def help_cmd(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="📖 DANH SÁCH LỆNH HỆ THỐNG",
-        description="Dưới đây là các lệnh khả dụng của bot:",
-        color=3092790
-    )
-    embed.add_field(
-        name="🛠️ Các lệnh chính",
-        value=(
-            "• `/streak [user]` - Kiểm tra chuỗi tương tác (Streak) với người dùng khác.\n"
-            "• `/invite-streak [user]` - Gửi lời mời tạo chuỗi Streak đến người dùng.\n"
-            "• `/setupkenh` - Cài đặt kênh nhận thông báo OctoLink.\n"
-            "• `/help` - Hiển thị bảng hướng dẫn này."
-        ),
-        inline=False
-    )
-    embed.set_footer(text="by ph.huyy")
-    
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await bot.process_commands(message)
 
 
-# ── BACKGROUND TASK QUÉT OCTOLINK VÀ THÔNG BÁO ─────────────────────────────
-OCTOLINK_API_KEY = os.environ.get("OCTOLINK_API_KEY", "1617ae1eea0cf96a7f9312494a10b35507b65e3f")
-last_known_clicks = {}
+# =========================================================================
+# PHẦN 5: KHỞI ĐỘNG BOT VỚI BIẾN MÔI TRƯỜNG TRÊN RAILWAY (`BOT_TOKEN`)
+# =========================================================================
 
-async def fetch_octolink_stats():
-    if not OCTOLINK_API_KEY:
-        return None
-    url = f"https://octolink.vip/api?api={OCTOLINK_API_KEY}&action=stats"
-    try:
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, lambda: requests.get(url, timeout=10))
-        if response.status_code == 200:
-            return response.json()
-    except Exception:
-        pass
-    return None
+TOKEN = os.getenv("BOT_TOKEN")
 
-@tasks.loop(seconds=60)
-async def octolink_notification_task():
-    data = await fetch_octolink_stats()
-    if not data or not isinstance(data, dict):
-        return
-
-    links = data.get("links", [])
-    config = load_config()
-
-    for link in links:
-        short_id = link.get("id") or link.get("short_url")
-        current_clicks = link.get("clicks", 0)
-        long_url = link.get("url", "Không rõ")
-
-        if short_id in last_known_clicks:
-            if current_clicks > last_known_clicks[short_id]:
-                new_passes = current_clicks - last_known_clicks[short_id]
-                
-                embed = discord.Embed(
-                    title="🔗 Phát hiện lượt vượt link mới!",
-                    description="Có người vừa vượt thành công link rút gọn của bạn!",
-                    color=65280
-                )
-                embed.add_field(name="Link gốc", value=f"[Bấm vào đây]({long_url})", inline=False)
-                embed.add_field(name="Tổng số lượt vượt", value=f"`{current_clicks}` (+{new_passes} mới)", inline=True)
-                embed.set_footer(text=f"OctoLink System • ID: {short_id}")
-
-                for guild_id_str, guild_data in config.items():
-                    channel_id = guild_data.get("channel_id")
-                    if channel_id:
-                        channel = client.get_channel(int(channel_id))
-                        if channel:
-                            try:
-                                await channel.send(embed=embed)
-                            except Exception:
-                                pass
-
-        last_known_clicks[short_id] = current_clicks
-
-@octolink_notification_task.before_loop
-async def before_octolink_task():
-    await client.wait_until_ready()
-
-
-if __name__ == "__main__":
-    bot_token = os.environ.get("BOT_TOKEN", "").strip()
-    if not bot_token:
-        print("[ LỖI ] Chưa cấu hình Bot Token trong biến môi trường BOT_TOKEN!")
-        exit(1)
-    client.run(bot_token)
+if TOKEN:
+    bot.run(TOKEN)
+else:
+    print("❌ Lỗi: Không tìm thấy biến môi trường BOT_TOKEN!")
