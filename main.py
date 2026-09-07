@@ -3,6 +3,7 @@ from discord.ext import commands
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 import os
+import datetime
 
 # Khởi tạo bot với Intents cần thiết
 intents = discord.Intents.default()
@@ -11,8 +12,10 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Lưu trữ danh sách người dùng đang AFK
+# Lưu trữ dữ liệu tạm thời (Lưu ý: Có thể dùng Database nếu muốn lưu lâu dài chạy trên Railway)
 afk_users = {}
+user_birthdays = {}           # Lưu dạng: {user_id: "DD/MM/YYYY"}
+server_congrats_channels = {}  # Lưu dạng: {guild_id: channel_id}
 
 # Cấu hình nội dung Welcome mặc định
 WELCOME_CONFIG = {
@@ -139,10 +142,95 @@ async def thongbao(interaction: discord.Interaction, title: str, content: str):
 
 
 # =========================================================================
-# PHẦN 3: CÁC LỆNH QUẢN LÝ (BAN, UNBAN, MUTE, UNMUTE, AFK) - EMBED ĐẸP
+# PHẦN 3: HỆ THỐNG BIRTHDAY (SETUP KÊNH ĐĂNG KÝ, KÊNH CHÚC, NÚT BẤM & MODAL)
 # =========================================================================
 
-# Lệnh !ban
+class BirthdayModal(discord.ui.Modal, title="🎂 Đăng ký Ngày Sinh Nhật"):
+    dob_input = discord.ui.TextInput(
+        label="Nhập ngày tháng năm sinh của bạn",
+        style=discord.TextStyle.short,
+        placeholder="Ví dụ: 25/12/2004",
+        required=True,
+        max_length=15
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        dob_str = self.dob_input.value.strip()
+        
+        try:
+            parsed_date = datetime.datetime.strptime(dob_str, "%d/%m/%Y")
+            current_year = datetime.datetime.now().year
+            if parsed_date.year > current_year or parsed_date.year < 1920:
+                await interaction.response.send_message("❌ Năm sinh không hợp lệ! Vui lòng kiểm tra lại.", ephemeral=True)
+                return
+
+            user_birthdays[interaction.user.id] = dob_str
+
+            embed = discord.Embed(
+                title="✅ Lưu ngày sinh thành công!",
+                description=f"Hệ thống đã ghi nhận ngày sinh của bạn là: **{dob_str}** 🎂",
+                color=discord.Color.green()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        except ValueError:
+            embed = discord.Embed(
+                title="❌ Sai định dạng!",
+                description="Vui lòng nhập đúng định dạng **Ngày/Tháng/Năm** (Ví dụ: `25/12/2004`).",
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class BirthdayView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🎉 Nhập ngày sinh của bạn", style=discord.ButtonStyle.primary, custom_id="setup_birthday_btn")
+    async def birthday_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(BirthdayModal())
+
+
+@bot.tree.command(name="setbirthday", description="Thiết lập kênh đăng ký và kênh gửi tin nhắn chúc mừng sinh nhật (Admin)")
+@discord.app_commands.describe(
+    channel="Kênh gửi bảng nút bấm để thành viên đăng ký",
+    congrats_channel="Kênh để bot tự động gửi tin nhắn chúc mừng sinh nhật"
+)
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setbirthday(interaction: discord.Interaction, channel: discord.TextChannel, congrats_channel: discord.TextChannel):
+    # Lưu lại kênh chúc mừng cho server này
+    server_congrats_channels[interaction.guild.id] = congrats_channel.id
+
+    embed = discord.Embed(
+        title="🎈 HỆ THỐNG ĐĂNG KÝ SINH NHẬT 🎈",
+        description=(
+            "Nhấn vào nút bên dưới để khai báo ngày sinh của bạn cho bot.\n\n"
+            f"✨ *Khi đến sinh nhật, bot sẽ gửi lời chúc mừng tuyệt vời tại kênh {congrats_channel.mention}!*"
+        ),
+        color=discord.Color.from_rgb(255, 105, 180)
+    )
+    embed.set_footer(text=interaction.guild.name, icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
+
+    # Gửi bảng kèm nút bấm vào kênh đăng ký được chọn
+    await channel.send(embed=embed, view=BirthdayView())
+    
+    await interaction.response.send_message(
+        f"✅ Đã thiết lập thành công!\n- Kênh đăng ký: {channel.mention}\n- Kênh gửi lời chúc: {congrats_channel.mention}",
+        ephemeral=True
+    )
+
+@setbirthday.error
+async def setbirthday_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+    if isinstance(error, discord.app_commands.MissingPermissions):
+        await interaction.response.send_message("⛔ Bạn cần quyền **Quản trị viên (Administrator)** để dùng lệnh này.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"❌ Lỗi: {error}", ephemeral=True)
+
+
+# =========================================================================
+# PHẦN 4: CÁC LỆNH QUẢN LÝ (BAN, UNBAN, MUTE, UNMUTE, AFK) - EMBED ĐẸP
+# =========================================================================
+
 @bot.command(name="ban")
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason="Không có lý do"):
@@ -166,7 +254,6 @@ async def ban_error(ctx, error):
         await ctx.send(embed=discord.Embed(title="⚠️ Sai cú pháp", description="Ví dụ đúng: `!ban @User Vi phạm nội quy`", color=discord.Color.orange()))
 
 
-# Lệnh !unban (Dùng ID hoặc dạng Tên#Tag của người bị ban)
 @bot.command(name="unban")
 @commands.has_permissions(ban_members=True)
 async def unban(ctx, user_id: int, *, reason="Không có lý do"):
@@ -196,7 +283,6 @@ async def unban_error(ctx, error):
         await ctx.send(embed=discord.Embed(title="⚠️ Sai cú pháp", description="Ví dụ đúng: `!unban 123456789012345678 Đã khiếu nại`", color=discord.Color.orange()))
 
 
-# Lệnh !mute
 @bot.command(name="mute")
 @commands.has_permissions(moderate_members=True)
 async def mute(ctx, member: discord.Member, minutes: int, *, reason="Không có lý do"):
@@ -221,7 +307,6 @@ async def mute_error(ctx, error):
         await ctx.send(embed=discord.Embed(title="⚠️ Sai cú pháp", description="Ví dụ đúng: `!mute @User 10 Spam chat`", color=discord.Color.orange()))
 
 
-# Lệnh !unmute
 @bot.command(name="unmute")
 @commands.has_permissions(moderate_members=True)
 async def unmute(ctx, member: discord.Member, *, reason="Không có lý do"):
@@ -245,7 +330,6 @@ async def unmute_error(ctx, error):
         await ctx.send(embed=discord.Embed(title="⚠️ Sai cú pháp", description="Ví dụ đúng: `!unmute @User Hết án phạt`", color=discord.Color.orange()))
 
 
-# Lệnh !afk
 @bot.command(name="afk")
 async def afk(ctx, *, reason="Đang bận"):
     """Bật chế độ AFK (!afk lý_do)"""
@@ -265,7 +349,7 @@ async def afk(ctx, *, reason="Đang bận"):
 
 
 # =========================================================================
-# PHẦN 4: SỰ KIỆN GỬI WELCOME, PING BOT THẢ REACTION & QUẢN LÝ AFK
+# PHẦN 5: SỰ KIỆN GỬI WELCOME, PING BOT THẢ REACTION & QUẢN LÝ AFK
 # =========================================================================
 
 @bot.event
@@ -368,7 +452,7 @@ async def on_message(message):
 
 
 # =========================================================================
-# PHẦN 5: KHỞI ĐỘNG BOT VỚI BIẾN MÔI TRƯỜNG TRÊN RAILWAY (`BOT_TOKEN`)
+# PHẦN 6: KHỞI ĐỘNG BOT VỚI BIẾN MÔI TRƯỜNG TRÊN RAILWAY (`BOT_TOKEN`)
 # =========================================================================
 
 TOKEN = os.getenv("BOT_TOKEN")
