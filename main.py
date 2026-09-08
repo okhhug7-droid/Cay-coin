@@ -16,12 +16,19 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 afk_users = {}
 user_birthdays = {}           # Lưu dạng: {user_id: "DD/MM/YYYY"}
 server_congrats_channels = {}  # Lưu dạng: {guild_id: channel_id}
+server_boost_channels = {}     # Lưu dạng: {guild_id: channel_id}
 
-# Cấu hình nội dung Welcome mặc định
+# Cấu hình nội dung mặc định
 WELCOME_CONFIG = {
     "channel_id": None,
     "message": "Chào mừng con vk {name} là thành viên thứ {number} của **{server}**! 🎉",
-    "background_image": "welcome_bg.png"
+    "background_image": "welcome_bg.png",
+    "gif_path": "welcome_gif.gif"
+}
+
+BOOST_CONFIG = {
+    "message": "Cảm ơn {member} đã Boost máy chủ để giúp server ngày càng phát triển hơn! 🚀💎",
+    "gif_path": "boost_gif.gif"
 }
 
 # ID của Admin đặc biệt được phép dùng lệnh thông báo
@@ -30,9 +37,8 @@ SPECIAL_ADMIN_ID = 1180179460339810314
 # Tên tác giả để gắn vào dưới mọi bảng Embed
 FOOTER_AUTHOR = "by ph.huyy"
 
-# Tên file video trong thư mục
-BIRTHDAY_VIDEO_PATH = "hb_video.mp4" 
-WELCOME_VIDEO_PATH = "welcome_video.mp4" 
+# Tên file GIF sinh nhật mặc định trong thư mục
+BIRTHDAY_GIF_PATH = "hb_gif.gif" 
 
 @bot.event
 async def on_ready():
@@ -47,15 +53,15 @@ async def on_ready():
 
 
 # =========================================================================
-# PHẦN 1: LỆNH SETWELCOME (CHO PHÉP TẢI ẢNH & VIDEO TRỰC TIẾP TỪ MÁY)
+# PHẦN 1: LỆNH SETWELCOME (CHỌN ẢNH NỀN & FILE GIF TỪ MÁY)
 # =========================================================================
 
-@bot.tree.command(name="setwelcome", description="Cài đặt thông tin welcome, ảnh nền và video trực tiếp bằng cách tải file từ máy")
+@bot.tree.command(name="setwelcome", description="Cài đặt welcome, ảnh nền và file GIF trực tiếp bằng cách tải file từ máy")
 @discord.app_commands.describe(
     message="Nội dung tin nhắn chào mừng (Dùng {name}, {number}, {member}, {server})",
     channel="Kênh hiển thị thông báo welcome",
     bg_file="Tải file ảnh nền từ máy của bạn (PNG/JPG)",
-    video_file="Tải file video 13 giây từ máy của bạn (MP4)"
+    gif_file="Tải file ảnh động GIF từ máy của bạn"
 )
 @discord.app_commands.checks.has_permissions(administrator=True)
 async def setwelcome(
@@ -63,21 +69,20 @@ async def setwelcome(
     message: str, 
     channel: discord.TextChannel, 
     bg_file: discord.Attachment = None, 
-    video_file: discord.Attachment = None
+    gif_file: discord.Attachment = None
 ):
     WELCOME_CONFIG["channel_id"] = channel.id
     WELCOME_CONFIG["message"] = message
 
-    # Lưu ảnh nền nếu có tải lên
     if bg_file:
         if bg_file.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
             await bg_file.save("welcome_bg.png")
             WELCOME_CONFIG["background_image"] = "welcome_bg.png"
 
-    # Lưu video nếu có tải lên
-    if video_file:
-        if video_file.filename.lower().endswith('.mp4'):
-            await video_file.save(WELCOME_VIDEO_PATH)
+    if gif_file:
+        if gif_file.filename.lower().endswith('.gif'):
+            await gif_file.save("welcome_gif.gif")
+            WELCOME_CONFIG["gif_path"] = "welcome_gif.gif"
 
     embed = discord.Embed(
         title="✨ Thiết lập Welcome thành công",
@@ -87,8 +92,8 @@ async def setwelcome(
     embed.add_field(name="💬 Mẫu tin nhắn", value=message, inline=False)
     if bg_file:
         embed.add_field(name="🖼️ Ảnh nền mới", value=bg_file.filename, inline=True)
-    if video_file:
-        embed.add_field(name="🎬 Video mới", value=video_file.filename, inline=True)
+    if gif_file:
+        embed.add_field(name="🎞️ GIF mới", value=gif_file.filename, inline=True)
         
     embed.set_footer(text=f"Cập nhật bởi {interaction.user.display_name} | {FOOTER_AUTHOR}", icon_url=interaction.user.display_avatar.url)
     
@@ -107,7 +112,59 @@ async def setwelcome_error(interaction: discord.Interaction, error: discord.app_
 
 
 # =========================================================================
-# PHẦN 2: LỆNH THÔNG BÁO (DÀNH CHO ID ĐẶC BIỆT & ADMIN)
+# PHẦN 2: LỆNH SETBOOST (CHỌN FILE GIF BOOST TỪ MÁY)
+# =========================================================================
+
+@bot.tree.command(name="setboost", description="Cài đặt kênh thông báo Boost và tải file GIF cảm ơn trực tiếp từ máy (Admin)")
+@discord.app_commands.describe(
+    channel="Kênh để bot gửi thông báo khi có người Boost",
+    message="Nội dung tin nhắn cảm ơn (Dùng {member}, {server})",
+    gif_file="Tải file ảnh động GIF từ máy của bạn"
+)
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setboost(
+    interaction: discord.Interaction, 
+    channel: discord.TextChannel, 
+    message: str = None,
+    gif_file: discord.Attachment = None
+):
+    server_boost_channels[interaction.guild.id] = channel.id
+    
+    if message:
+        BOOST_CONFIG["message"] = message
+
+    if gif_file:
+        if gif_file.filename.lower().endswith('.gif'):
+            await gif_file.save("boost_gif.gif")
+            BOOST_CONFIG["gif_path"] = "boost_gif.gif"
+
+    embed = discord.Embed(
+        title="✨ Thiết lập thông báo Boost thành công",
+        description=f"Đã cấu hình kênh thông báo Boost tại {channel.mention}!",
+        color=discord.Color.from_rgb(255, 115, 250)
+    )
+    embed.add_field(name="💬 Mẫu tin nhắn cảm ơn", value=BOOST_CONFIG["message"], inline=False)
+    if gif_file:
+        embed.add_field(name="🎞️ GIF Boost mới", value=gif_file.filename, inline=True)
+        
+    embed.set_footer(text=f"Cập nhật bởi {interaction.user.display_name} | {FOOTER_AUTHOR}", icon_url=interaction.user.display_avatar.url)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@setboost.error
+async def setboost_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+    if isinstance(error, discord.app_commands.MissingPermissions):
+        embed = discord.Embed(title="⛔ Từ chối truy cập", description="Bạn cần quyền **Quản trị viên (Administrator)** để sử dụng lệnh này.", color=discord.Color.red())
+        embed.set_footer(text=FOOTER_AUTHOR)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        embed = discord.Embed(title="❌ Lỗi", description=str(error), color=discord.Color.red())
+        embed.set_footer(text=FOOTER_AUTHOR)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# =========================================================================
+# PHẦN 3: LỆNH THÔNG BÁO (DÀNH CHO ID ĐẶC BIỆT & ADMIN)
 # =========================================================================
 
 @bot.tree.command(name="thongbao", description="Gửi bảng tin nhắn thông báo quan trọng đến kênh hiện tại")
@@ -137,7 +194,7 @@ async def thongbao(interaction: discord.Interaction, title: str, content: str):
 
 
 # =========================================================================
-# PHẦN 3: HỆ THỐNG BIRTHDAY (SETUP KÊNH, NÚT BẤM, MODAL & TASK KIỂM TRA)
+# PHẦN 4: HỆ THỐNG BIRTHDAY (SETUP KÊNH, NÚT BẤM, MODAL & TASK KIỂM TRA)
 # =========================================================================
 
 class BirthdayModal(discord.ui.Modal, title="🎂 Đăng ký Ngày Sinh Nhật"):
@@ -253,9 +310,12 @@ async def check_birthdays():
                     embed.set_thumbnail(url=member.display_avatar.url)
                     embed.set_footer(text=FOOTER_AUTHOR)
                     
-                    if os.path.exists(BIRTHDAY_VIDEO_PATH):
-                        file = discord.File(BIRTHDAY_VIDEO_PATH, filename="hb_video.mp4")
-                        await channel.send(content=f"@everyone Chúc mừng sinh nhật {member.mention}! 🥳", embed=embed, file=file)
+                    files_to_send = []
+                    if os.path.exists(BIRTHDAY_GIF_PATH):
+                        files_to_send.append(discord.File(BIRTHDAY_GIF_PATH, filename="hb_gif.gif"))
+
+                    if files_to_send:
+                        await channel.send(content=f"@everyone Chúc mừng sinh nhật {member.mention}! 🥳", embed=embed, files=files_to_send)
                     else:
                         await channel.send(content=f"@everyone Chúc mừng sinh nhật {member.mention}! 🥳", embed=embed)
 
@@ -265,7 +325,7 @@ async def before_check_birthdays():
 
 
 # =========================================================================
-# PHẦN 4: CÁC LỆNH QUẢN LÝ (BAN, UNBAN, MUTE, UNMUTE, AFK) - EMBED ĐẸP
+# PHẦN 5: CÁC LỆNH QUẢN LÝ (BAN, UNBAN, MUTE, UNMUTE, AFK) - EMBED ĐẸP
 # =========================================================================
 
 @bot.command(name="ban")
@@ -402,7 +462,7 @@ async def afk(ctx, *, reason="Đang bận"):
 
 
 # =========================================================================
-# PHẦN 5: SỰ KIỆN GỬI WELCOME (KÈM VIDEO 13 GIÂY), PING BOT & QUẢN LÝ AFK
+# PHẦN 6: SỰ KIỆN GỬI WELCOME, BOOST, PING BOT & QUẢN LÝ AFK
 # =========================================================================
 
 @bot.event
@@ -460,14 +520,54 @@ async def on_member_join(member):
     if img_file:
         files_to_send.append(img_file)
     
-    if os.path.exists(WELCOME_VIDEO_PATH):
-        video_file = discord.File(WELCOME_VIDEO_PATH, filename="welcome_video.mp4")
-        files_to_send.append(video_file)
+    if os.path.exists(WELCOME_CONFIG["gif_path"]):
+        files_to_send.append(discord.File(WELCOME_CONFIG["gif_path"], filename="welcome_gif.gif"))
 
     if files_to_send:
         await channel.send(content=custom_message, files=files_to_send)
     else:
         await channel.send(content=custom_message)
+
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    guild_id = after.guild.id
+    if guild_id not in server_boost_channels:
+        return
+
+    was_boosting = before.premium_since is not None
+    is_boosting = after.premium_since is not None
+
+    if not was_boosting and is_boosting:
+        channel_id = server_boost_channels[guild_id]
+        channel = after.guild.get_channel(channel_id)
+        if not channel:
+            return
+
+        embed = discord.Embed(
+            title="🚀 CẢM ƠN ĐÃ BOOST SERVER! 💎",
+            description=(
+                f"Cảm ơn {after.mention} đã hào phóng nâng cấp máy chủ **{after.guild.name}**!\n"
+                f"Sự ủng hộ của bạn là động lực rất lớn cho tụi mình! ❤️"
+            ),
+            color=discord.Color.from_rgb(255, 115, 250)
+        )
+        embed.set_thumbnail(url=after.display_avatar.url)
+        embed.set_footer(text=FOOTER_AUTHOR)
+
+        custom_msg = BOOST_CONFIG["message"].format(
+            member=after.mention,
+            server=after.guild.name
+        )
+
+        files_to_send = []
+        if os.path.exists(BOOST_CONFIG["gif_path"]):
+            files_to_send.append(discord.File(BOOST_CONFIG["gif_path"], filename="boost_gif.gif"))
+
+        if files_to_send:
+            await channel.send(content=f"@everyone {custom_msg}", embed=embed, files=files_to_send)
+        else:
+            await channel.send(content=f"@everyone {custom_msg}", embed=embed)
 
 
 @bot.event
@@ -515,7 +615,7 @@ async def on_message(message):
 
 
 # =========================================================================
-# PHẦN 6: KHỞI ĐỘNG BOT VỚI BIẾN MÔI TRƯỜNG TRÊN RAILWAY (`BOT_TOKEN`)
+# PHẦN 7: KHỞI ĐỘNG BOT VỚI BIẾN MÔI TRƯỜNG TRÊN RAILWAY (`BOT_TOKEN`)
 # =========================================================================
 
 TOKEN = os.getenv("BOT_TOKEN")
