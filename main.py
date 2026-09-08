@@ -7,8 +7,8 @@ import json
 import time
 
 # ==================== CẤU HÌNH THÔNG SỐ MONEYTASK ====================
-MONEYTASK_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwaG9uZSI6bnVsbCwidXNlcklkIjo5OTkxLCJyb2xlIjoxLCJzdiI6MSwiaWF0IjoxNzg4ODMwOTI3LCJleHAiOjE3ODk0MzU3Mjd9.a7_pnxas6yD_ZMn-PpcosliciVdj6VtKPKKTB2EvjXY"  # Token JWT của bạn[cite: 1]
-DELAY = 60  # Thời gian lặp lại quét nhiệm vụ (giây)[cite: 1]
+MONEYTASK_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwaG9uZSI6bnVsbCwidXNlcklkIjo5OTkxLCJyb2xlIjoxLCJzdiI6MSwiaWF0IjoxNzg4ODMwOTI3LCJleHAiOjE3ODk0MzU3Mjd9.a7_pnxas6yD_ZMn-PpcosliciVdj6VtKPKKTB2EvjXY"  # Token JWT của bạn
+DELAY = 60  # Thời gian lặp lại quét nhiệm vụ (giây)
 # ====================================================================
 
 # Khởi tạo bot với Intents cần thiết
@@ -27,7 +27,7 @@ server_boost_channels = {}     # Lưu dạng: {guild_id: channel_id}
 # Biến lưu trữ cho phần MoneyTask
 active_task_channel_id = None
 last_task_message_id = None
-API_MONEYTASK = "https://moneytask.top/api/tasks/uptolink-campaigns"[cite: 1]
+API_MONEYTASK = "https://moneytask.top/api/tasks/uptolink-campaigns"
 
 # Cấu hình nội dung mặc định theo đúng mẫu của bạn
 WELCOME_CONFIG = {
@@ -59,7 +59,7 @@ BIRTHDAY_GIF_PATH = "hb_gif.gif"
 async def on_ready():
     print(f"🤖 Bot đã đăng nhập thành công với tên: {bot.user}")
     if not check_birthdays.is_running():
-        check_birthdays.start()  # Kích hoạt vòng lặp kiểm tra sinh nhật[cite: 1]
+        check_birthdays.start()  # Kích hoạt vòng lặp kiểm tra sinh nhật
     
     try:
         synced = await bot.tree.sync()
@@ -67,7 +67,7 @@ async def on_ready():
     except Exception as e:
         print(f"⚠️ Lỗi đồng bộ lệnh slash: {e}")
 
-    # Khởi động vòng lặp quét MoneyTask ngầm[cite: 1]
+    # Khởi động vòng lặp quét MoneyTask ngầm
     if not background_moneytask_loop.is_running():
         background_moneytask_loop.start()
 
@@ -205,7 +205,7 @@ async def thongbao(interaction: discord.Interaction, title: str, content: str):
 
 
 # =========================================================================
-# PHẦN 4: TÍNH NĂNG MONEYTASK (SETUP KÊNH & TỰ ĐỘNG CẬP NHẬT CHIẾN DỊCH)[cite: 1]
+# PHẦN 4: TÍNH NĂNG MONEYTASK (SETUP KÊNH & TỰ ĐỘNG CẬP NHẬT CHIẾN DỊCH)
 # =========================================================================
 
 @bot.tree.command(name="setuptask", description="Chọn kênh để bot tự động gửi và cập nhật danh sách chiến dịch Uptolink")
@@ -234,11 +234,11 @@ async def setuptask_error(interaction: discord.Interaction, error: discord.app_c
 
 
 def get_campaign_data():
-    """Lấy dữ liệu chiến dịch từ MoneyTask bằng JWT Token[cite: 1]"""
+    """Lấy dữ liệu chiến dịch từ MoneyTask bằng JWT Token"""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
-        "Referer": "https://moneytask.top/",[cite: 1]
+        "Referer": "https://moneytask.top/",
         "Authorization": f"Bearer {MONEYTASK_TOKEN}"
     }
     try:
@@ -249,7 +249,7 @@ def get_campaign_data():
 
 
 def build_moneytask_embed_payload(data):
-    """Tạo khung Discord Embed cho danh sách MoneyTask[cite: 1]"""
+    """Tạo khung Discord Embed cho danh sách MoneyTask"""
     if isinstance(data, dict) and (data.get("message") == "401: Unauthorized" or "error" in data):
         return {
             "embeds": [{
