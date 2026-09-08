@@ -1,2 +1,2 @@
 discord.py
-Pillow
+requests
