@@ -7,29 +7,25 @@ import json
 import time
 
 # ==================== CẤU HÌNH THÔNG SỐ MONEYTASK ====================
-MONEYTASK_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwaG9uZSI6bnVsbCwidXNlcklkIjo5OTkxLCJyb2xlIjoxLCJzdiI6MSwiaWF0IjoxNzg4ODMwOTI3LCJleHAiOjE3ODk0MzU3Mjd9.a7_pnxas6yD_ZMn-PpcosliciVdj6VtKPKKTB2EvjXY"  # Token JWT của bạn
-DELAY = 60  # Thời gian lặp lại quét nhiệm vụ (giây)
+MONEYTASK_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwaG9uZSI6bnVsbCwidXNlcklkIjo5OTkxLCJyb2xlIjoxLCJzdiI6MSwiaWF0IjoxNzg4ODMwOTI3LCJleHAiOjE3ODk0MzU3Mjd9.a7_pnxas6yD_ZMn-PpcosliciVdj6VtKPKKTB2EvjXY"
+DELAY = 60
 # ====================================================================
 
-# Khởi tạo bot với Intents cần thiết
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Lưu trữ dữ liệu tạm thời
 afk_users = {}
-user_birthdays = {}           # Lưu dạng: {user_id: "DD/MM/YYYY"}
-server_congrats_channels = {}  # Lưu dạng: {guild_id: channel_id}
-server_boost_channels = {}     # Lưu dạng: {guild_id: channel_id}
+user_birthdays = {}
+server_congrats_channels = {}
+server_boost_channels = {}
 
-# Biến lưu trữ cho phần MoneyTask
 active_task_channel_id = None
 last_task_message_id = None
 API_MONEYTASK = "https://moneytask.top/api/tasks/uptolink-campaigns"
 
-# Cấu hình nội dung mặc định theo đúng mẫu của bạn
 WELCOME_CONFIG = {
     "channel_id": None,
     "message": (
@@ -46,20 +42,15 @@ BOOST_CONFIG = {
     "gif_path": "boost_gif.gif"
 }
 
-# ID của Admin đặc biệt được phép dùng lệnh thông báo
 SPECIAL_ADMIN_ID = 1180179460339810314
-
-# Tên tác giả để gắn vào dưới mọi bảng Embed quản lý
 FOOTER_AUTHOR = "by ph.huyy"
-
-# Tên file GIF sinh nhật mặc định trong thư mục
 BIRTHDAY_GIF_PATH = "hb_gif.gif" 
 
 @bot.event
 async def on_ready():
     print(f"🤖 Bot đã đăng nhập thành công với tên: {bot.user}")
     if not check_birthdays.is_running():
-        check_birthdays.start()  # Kích hoạt vòng lặp kiểm tra sinh nhật
+        check_birthdays.start()
     
     try:
         synced = await bot.tree.sync()
@@ -67,14 +58,8 @@ async def on_ready():
     except Exception as e:
         print(f"⚠️ Lỗi đồng bộ lệnh slash: {e}")
 
-    # Khởi động vòng lặp quét MoneyTask ngầm
     if not background_moneytask_loop.is_running():
         background_moneytask_loop.start()
-
-
-# =========================================================================
-# PHẦN 1: LỆNH SETWELCOME (TẢI FILE GIF WELCOME TỪ MÁY)
-# =========================================================================
 
 @bot.tree.command(name="setwelcome", description="Cài đặt tin nhắn welcome và file GIF trực tiếp bằng cách tải file từ máy")
 @discord.app_commands.describe(
@@ -120,11 +105,6 @@ async def setwelcome_error(interaction: discord.Interaction, error: discord.app_
         embed = discord.Embed(title="❌ Lỗi", description=str(error), color=discord.Color.red())
         embed.set_footer(text=FOOTER_AUTHOR)
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-# =========================================================================
-# PHẦN 2: LỆNH SETBOOST (TẢI FILE GIF BOOST TỪ MÁY)
-# =========================================================================
 
 @bot.tree.command(name="setboost", description="Cài đặt kênh thông báo Boost dạng Embed và tải file GIF cảm ơn từ máy (Admin)")
 @discord.app_commands.describe(
@@ -173,11 +153,6 @@ async def setboost_error(interaction: discord.Interaction, error: discord.app_co
         embed.set_footer(text=FOOTER_AUTHOR)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-
-# =========================================================================
-# PHẦN 3: LỆNH THÔNG BÁO (DÀNH CHO ID ĐẶC BIỆT & ADMIN)
-# =========================================================================
-
 @bot.tree.command(name="thongbao", description="Gửi bảng tin nhắn thông báo quan trọng đến kênh hiện tại")
 @discord.app_commands.describe(
     title="Tiêu đề của bản thông báo",
@@ -203,18 +178,13 @@ async def thongbao(interaction: discord.Interaction, title: str, content: str):
     
     await interaction.response.send_message(content="@everyone", embed=embed)
 
-
-# =========================================================================
-# PHẦN 4: TÍNH NĂNG MONEYTASK (SETUP KÊNH & TỰ ĐỘNG CẬP NHẬT CHIẾN DỊCH)
-# =========================================================================
-
 @bot.tree.command(name="setuptask", description="Chọn kênh để bot tự động gửi và cập nhật danh sách chiến dịch Uptolink")
 @discord.app_commands.describe(channel="Chọn kênh Discord bạn muốn bot hiển thị thông báo nhiệm vụ")
 @discord.app_commands.checks.has_permissions(administrator=True)
 async def setuptask(interaction: discord.Interaction, channel: discord.TextChannel):
     global active_task_channel_id, last_task_message_id
     active_task_channel_id = channel.id
-    last_task_message_id = None  # Reset lại tin nhắn cũ khi đổi kênh
+    last_task_message_id = None
 
     embed = discord.Embed(
         title="✅ SETUP KÊNH NHIỆM VỤ THÀNH CÔNG",
@@ -223,7 +193,6 @@ async def setuptask(interaction: discord.Interaction, channel: discord.TextChann
     )
     embed.set_footer(text=FOOTER_AUTHOR)
     await interaction.response.send_message(embed=embed, ephemeral=True)
-    print(f"📌 Đã đổi kênh nhận thông báo task thành: {channel.name} (ID: {channel.id})")
 
 @setuptask.error
 async def setuptask_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
@@ -232,9 +201,7 @@ async def setuptask_error(interaction: discord.Interaction, error: discord.app_c
     else:
         await interaction.response.send_message(f"❌ Đã xảy ra lỗi: {error}", ephemeral=True)
 
-
 def get_campaign_data():
-    """Lấy dữ liệu chiến dịch từ MoneyTask bằng JWT Token"""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
@@ -247,9 +214,7 @@ def get_campaign_data():
     except Exception as e:
         return {"error": f"Lỗi kết nối MoneyTask: {e}"}
 
-
 def build_moneytask_embed_payload(data):
-    """Tạo khung Discord Embed cho danh sách MoneyTask"""
     if isinstance(data, dict) and (data.get("message") == "401: Unauthorized" or "error" in data):
         return {
             "embeds": [{
@@ -294,7 +259,6 @@ def build_moneytask_embed_payload(data):
         }]
     }
 
-
 @tasks.loop(seconds=DELAY)
 async def background_moneytask_loop():
     global active_task_channel_id, last_task_message_id
@@ -328,11 +292,6 @@ async def background_moneytask_loop():
 @background_moneytask_loop.before_loop
 async def before_moneytask_loop():
     await bot.wait_until_ready()
-
-
-# =========================================================================
-# PHẦN 5: HỆ THỐNG BIRTHDAY (SETUP KÊNH, NÚT BẤM, MODAL & TASK KIỂM TRA)
-# =========================================================================
 
 class BirthdayModal(discord.ui.Modal, title="🎂 Đăng ký Ngày Sinh Nhật"):
     dob_input = discord.ui.TextInput(
@@ -369,7 +328,6 @@ class BirthdayModal(discord.ui.Modal, title="🎂 Đăng ký Ngày Sinh Nhật")
             embed.set_footer(text=FOOTER_AUTHOR)
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
-
 class BirthdayView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -377,7 +335,6 @@ class BirthdayView(discord.ui.View):
     @discord.ui.button(label="🎉 Nhập ngày sinh của bạn", style=discord.ButtonStyle.primary, custom_id="setup_birthday_btn")
     async def birthday_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BirthdayModal())
-
 
 @bot.tree.command(name="setbirthday", description="Thiết lập kênh đăng ký và kênh gửi tin nhắn chúc mừng sinh nhật (Admin)")
 @discord.app_commands.describe(
@@ -410,7 +367,6 @@ async def setbirthday_error(interaction: discord.Interaction, error: discord.app
         await interaction.response.send_message("⛔ Bạn cần quyền **Quản trị viên (Administrator)** để dùng lệnh này.", ephemeral=True)
     else:
         await interaction.response.send_message(f"❌ Lỗi: {error}", ephemeral=True)
-
 
 @tasks.loop(hours=24)
 async def check_birthdays():
@@ -455,11 +411,6 @@ async def check_birthdays():
 async def before_check_birthdays():
     await bot.wait_until_ready()
 
-
-# =========================================================================
-# PHẦN 6: CÁC LỆNH QUẢN LÝ (BAN, UNBAN, MUTE, UNMUTE, AFK)
-# =========================================================================
-
 @bot.command(name="ban")
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason="Không có lý do"):
@@ -472,7 +423,6 @@ async def ban(ctx, member: discord.Member, *, reason="Không có lý do"):
     embed.add_field(name="Lý do", value=reason, inline=False)
     embed.set_footer(text=f"Thực hiện bởi: {ctx.author.display_name} | {FOOTER_AUTHOR}", icon_url=ctx.author.display_avatar.url)
     await ctx.send(embed=embed)
-
 
 @bot.command(name="unban")
 @commands.has_permissions(ban_members=True)
@@ -493,7 +443,6 @@ async def unban(ctx, user_id: int, *, reason="Không có lý do"):
         embed.set_footer(text=FOOTER_AUTHOR)
         await ctx.send(embed=embed)
 
-
 @bot.command(name="mute")
 @commands.has_permissions(moderate_members=True)
 async def mute(ctx, member: discord.Member, minutes: int, *, reason="Không có lý do"):
@@ -508,7 +457,6 @@ async def mute(ctx, member: discord.Member, minutes: int, *, reason="Không có 
     embed.set_footer(text=f"Thực hiện bởi: {ctx.author.display_name} | {FOOTER_AUTHOR}", icon_url=ctx.author.display_avatar.url)
     await ctx.send(embed=embed)
 
-
 @bot.command(name="unmute")
 @commands.has_permissions(moderate_members=True)
 async def unmute(ctx, member: discord.Member, *, reason="Không có lý do"):
@@ -521,7 +469,6 @@ async def unmute(ctx, member: discord.Member, *, reason="Không có lý do"):
     embed.add_field(name="Lý do", value=reason, inline=False)
     embed.set_footer(text=f"Thực hiện bởi: {ctx.author.display_name} | {FOOTER_AUTHOR}", icon_url=ctx.author.display_avatar.url)
     await ctx.send(embed=embed)
-
 
 @bot.command(name="afk")
 async def afk(ctx, *, reason="Đang bận"):
@@ -539,11 +486,6 @@ async def afk(ctx, *, reason="Đang bận"):
     embed.add_field(name="Lý do", value=reason, inline=False)
     embed.set_footer(text=FOOTER_AUTHOR)
     await ctx.send(embed=embed)
-
-
-# =========================================================================
-# PHẦN 7: SỰ KIỆN GỬI WELCOME, BOOST EMBED PREMIUM, PING & AFK
-# =========================================================================
 
 @bot.event
 async def on_member_join(member):
@@ -577,7 +519,6 @@ async def on_member_join(member):
         await channel.send(content=custom_message, files=files_to_send)
     else:
         await channel.send(content=custom_message)
-
 
 @bot.event
 async def on_member_update(before: discord.Member, after: discord.Member):
@@ -622,13 +563,11 @@ async def on_member_update(before: discord.Member, after: discord.Member):
         else:
             await channel.send(content=f"@everyone {custom_msg}", embed=embed)
 
-
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # 1. Thả emoji cảm xúc khi có người ping bot
     if bot.user in message.mentions:
         try:
             emoji = discord.PartialEmoji(name="emoji_39", id=1538913815083622550)
@@ -636,7 +575,6 @@ async def on_message(message):
         except Exception as e:
             print(f"Không thể thả reaction: {e}")
 
-    # 2. Tắt AFK khi người đó gửi tin nhắn
     if message.author.id in afk_users:
         del afk_users[message.author.id]
         try:
@@ -653,7 +591,6 @@ async def on_message(message):
         embed.set_footer(text=FOOTER_AUTHOR)
         await message.channel.send(embed=embed)
 
-    # 3. Thông báo khi có người tag người đang AFK
     for mention in message.mentions:
         if mention.id in afk_users:
             reason = afk_users[mention.id]
@@ -665,11 +602,6 @@ async def on_message(message):
             await message.channel.send(embed=embed)
 
     await bot.process_commands(message)
-
-
-# =========================================================================
-# PHẦN 8: KHỞI ĐỘNG BOT
-# =========================================================================
 
 TOKEN = os.getenv("BOT_TOKEN")
 
