@@ -15,8 +15,9 @@ afk_users = {}
 user_birthdays = {}           # Lưu dạng: {user_id: "DD/MM/YYYY"}
 server_congrats_channels = {}  # Lưu dạng: {guild_id: channel_id}
 server_boost_channels = {}     # Lưu dạng: {guild_id: channel_id}
+server_stats_channels = {}     # Lưu dạng: {guild_id: {"member_channel": id, "boost_channel": id}}
 
-# Cấu hình nội dung mặc định theo đúng mẫu của bạn
+# Cấu hình nội dung mặc định
 WELCOME_CONFIG = {
     "channel_id": None,
     "message": (
@@ -46,7 +47,9 @@ BIRTHDAY_GIF_PATH = "hb_gif.gif"
 async def on_ready():
     print(f"🤖 Bot đã đăng nhập thành công với tên: {bot.user}")
     if not check_birthdays.is_running():
-        check_birthdays.start()  # Kích hoạt vòng lặp kiểm tra sinh nhật
+        check_birthdays.start()
+    if not update_stats_loop.is_running():
+        update_stats_loop.start()
     
     try:
         synced = await bot.tree.sync()
@@ -56,7 +59,7 @@ async def on_ready():
 
 
 # =========================================================================
-# PHẦN 1: LỆNH SETWELCOME (TẢI FILE GIF WELCOME TỪ MÁY)
+# PHẦN 1: LỆNH SETWELCOME
 # =========================================================================
 
 @bot.tree.command(name="setwelcome", description="Cài đặt tin nhắn welcome và file GIF trực tiếp bằng cách tải file từ máy")
@@ -106,7 +109,7 @@ async def setwelcome_error(interaction: discord.Interaction, error: discord.app_
 
 
 # =========================================================================
-# PHẦN 2: LỆNH SETBOOST (TẢI FILE GIF BOOST TỪ MÁY)
+# PHẦN 2: LỆNH SETBOOST
 # =========================================================================
 
 @bot.tree.command(name="setboost", description="Cài đặt kênh thông báo Boost dạng Embed và tải file GIF cảm ơn từ máy (Admin)")
@@ -158,7 +161,7 @@ async def setboost_error(interaction: discord.Interaction, error: discord.app_co
 
 
 # =========================================================================
-# PHẦN 3: LỆNH THÔNG BÁO (DÀNH CHO ID ĐẶC BIỆT & ADMIN)
+# PHẦN 3: LỆNH THÔNG BÁO
 # =========================================================================
 
 @bot.tree.command(name="thongbao", description="Gửi bảng tin nhắn thông báo quan trọng đến kênh hiện tại")
@@ -188,7 +191,7 @@ async def thongbao(interaction: discord.Interaction, title: str, content: str):
 
 
 # =========================================================================
-# PHẦN 4: HỆ THỐNG BIRTHDAY (SETUP KÊNH, NÚT BẤM, MODAL & TASK KIỂM TRA)
+# PHẦN 4: HỆ THỐNG BIRTHDAY
 # =========================================================================
 
 class BirthdayModal(discord.ui.Modal, title="🎂 Đăng ký Ngày Sinh Nhật"):
@@ -399,7 +402,135 @@ async def afk(ctx, *, reason="Đang bận"):
 
 
 # =========================================================================
-# PHẦN 6: SỰ KIỆN GỬI WELCOME, BOOST EMBED PREMIUM, PING & AFK
+# PHẦN 6: LỆNH SERVER STATS VÀ KÊNH THỐNG KÊ TỰ ĐỘNG
+# =========================================================================
+
+@bot.tree.command(name="serverstats", description="Hiển thị bảng thống kê chi tiết thông tin của máy chủ")
+async def serverstats(interaction: discord.Interaction):
+    guild = interaction.guild
+    
+    total_members = guild.member_count
+    bots = sum(1 for m in guild.members if m.bot)
+    humans = total_members - bots
+    
+    text_channels = len(guild.text_channels)
+    voice_channels = len(guild.voice_channels)
+    categories = len(guild.categories)
+    total_channels = text_channels + voice_channels + categories
+    
+    boost_level = guild.premium_tier
+    boost_count = guild.premium_subscription_count
+    created_at = guild.created_at.strftime("%d/%m/%Y - %H:%M:%S")
+    owner = guild.owner.mention if guild.owner else "Không rõ"
+
+    embed = discord.Embed(
+        title=f"📊 THỐNG KÊ MÁY CHỦ: {guild.name}",
+        color=discord.Color.blue()
+    )
+    
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+        
+    embed.add_field(name="👑 Chủ sở hữu", value=owner, inline=True)
+    embed.add_field(name="📅 Ngày thành lập", value=created_at, inline=True)
+    embed.add_field(name="\u200b", value="\u200b", inline=True)
+    
+    embed.add_field(
+        name=f"👥 Thành viên ({total_members})", 
+        value=f"👤 Người: `{humans}`\n🤖 Bot: `{bots}`", 
+        inline=True
+    )
+    embed.add_field(
+        name=f"📁 Kênh ({total_channels})", 
+        value=f"💬 Chat: `{text_channels}`\n🔊 Voice: `{voice_channels}`\n📂 Danh mục: `{categories}`", 
+        inline=True
+    )
+    embed.add_field(
+        name="🚀 Boost Server", 
+        value=f"Cấp độ: `{boost_level}`\nSố lượt Boost: `{boost_count}`", 
+        inline=True
+    )
+    
+    embed.set_footer(text=f"ID Server: {guild.id} | {FOOTER_AUTHOR}", icon_url=interaction.user.display_avatar.url)
+    
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="setupstats", description="Tự động tạo các kênh thoại hiển thị thống kê server (Admin)")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setupstats(interaction: discord.Interaction):
+    guild = interaction.guild
+    
+    if not guild.me.guild_permissions.manage_channels:
+        await interaction.response.send_message("❌ Bot thiếu quyền **Quản lý kênh (Manage Channels)** để tạo kênh thống kê!", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    category = await guild.create_category("📊 SERVER STATS 📊")
+
+    total_members = guild.member_count
+    boost_count = guild.premium_subscription_count
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(connect=False, view_channel=True)
+    }
+
+    chan_member = await guild.create_voice_channel(f"👥 Thành viên: {total_members}", category=category, overwrites=overwrites)
+    chan_boost = await guild.create_voice_channel(f"🚀 Boost: {boost_count}", category=category, overwrites=overwrites)
+
+    server_stats_channels[guild.id] = {
+        "member_channel": chan_member.id,
+        "boost_channel": chan_boost.id
+    }
+
+    if not update_stats_loop.is_running():
+        update_stats_loop.start()
+
+    await interaction.followup.send("✨ Đã thiết lập thành công hệ thống kênh thống kê server!", ephemeral=True)
+
+@setupstats.error
+async def setupstats_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+    if isinstance(error, discord.app_commands.MissingPermissions):
+        await interaction.response.send_message("⛔ Bạn cần quyền **Quản trị viên (Administrator)** để dùng lệnh này.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"❌ Lỗi: {error}", ephemeral=True)
+
+
+@tasks.loop(minutes=10)
+async def update_stats_loop():
+    for guild_id, channels in server_stats_channels.items():
+        guild = bot.get_guild(guild_id)
+        if not guild:
+            continue
+            
+        total_members = guild.member_count
+        member_chan_id = channels.get("member_channel")
+        if member_chan_id:
+            chan = guild.get_channel(member_chan_id)
+            if chan:
+                try:
+                    await chan.edit(name=f"👥 Thành viên: {total_members}")
+                except Exception:
+                    pass
+
+        boost_count = guild.premium_subscription_count
+        boost_chan_id = channels.get("boost_channel")
+        if boost_chan_id:
+            chan = guild.get_channel(boost_chan_id)
+            if chan:
+                try:
+                    await chan.edit(name=f"🚀 Boost: {boost_count}")
+                except Exception:
+                    pass
+
+@update_stats_loop.before_loop
+async def before_update_stats_loop():
+    await bot.wait_until_ready()
+
+
+# =========================================================================
+# PHẦN 7: SỰ KIỆN GỬI WELCOME, BOOST, PING & AFK
 # =========================================================================
 
 @bot.event
@@ -485,7 +616,6 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # 1. Thả emoji cảm xúc khi có người ping bot
     if bot.user in message.mentions:
         try:
             emoji = discord.PartialEmoji(name="emoji_39", id=1538913815083622550)
@@ -493,7 +623,6 @@ async def on_message(message):
         except Exception as e:
             print(f"Không thể thả reaction: {e}")
 
-    # 2. Tắt AFK khi người đó gửi tin nhắn
     if message.author.id in afk_users:
         del afk_users[message.author.id]
         try:
@@ -510,7 +639,6 @@ async def on_message(message):
         embed.set_footer(text=FOOTER_AUTHOR)
         await message.channel.send(embed=embed)
 
-    # 3. Thông báo khi có người tag người đang AFK
     for mention in message.mentions:
         if mention.id in afk_users:
             reason = afk_users[mention.id]
@@ -525,7 +653,7 @@ async def on_message(message):
 
 
 # =========================================================================
-# PHẦN 7: KHỞI ĐỘNG BOT
+# PHẦN 8: KHỞI ĐỘNG BOT
 # =========================================================================
 
 TOKEN = os.getenv("BOT_TOKEN")
