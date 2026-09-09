@@ -5,7 +5,9 @@ import datetime
 import sqlite3
 import math
 import asyncio
+import functools
 from google import genai
+import yt_dlp
 
 
 # --- TÍNH CÁCH CHAT TỰ NHIÊN ---
@@ -77,6 +79,17 @@ db_cursor.execute("""
 """)
 
 db_cursor.execute("""
+    CREATE TABLE IF NOT EXISTS polls (
+        message_id INTEGER PRIMARY KEY,
+        guild_id INTEGER,
+        channel_id INTEGER,
+        question TEXT,
+        options TEXT,
+        created_by INTEGER
+    )
+""")
+
+db_cursor.execute("""
     CREATE TABLE IF NOT EXISTS ai_channels (
         guild_id INTEGER PRIMARY KEY,
         channel_id INTEGER
@@ -92,6 +105,128 @@ db_cursor.execute("""
     )
 """)
 db_conn.commit()
+
+# --- HỆ THỐNG TREO CALL ---
+db_cursor.execute("""
+    CREATE TABLE IF NOT EXISTS voice_channels (
+        guild_id INTEGER PRIMARY KEY,
+        channel_id INTEGER NOT NULL
+    )
+""")
+db_conn.commit()
+
+voice_keepalive_tasks = {}
+
+# --- HỆ THỐNG PHÁT NHẠC ---
+music_queues = {}
+music_now_playing = {}
+music_locks = {}
+
+YTDL_OPTIONS = {
+    "format": "bestaudio/best",
+    "noplaylist": True,
+    "quiet": True,
+    "no_warnings": True,
+    "default_search": "ytsearch",
+    "source_address": "0.0.0.0",
+}
+
+FFMPEG_OPTIONS = {
+    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+    "options": "-vn",
+}
+
+def get_music_queue(guild_id: int):
+    return music_queues.setdefault(guild_id, [])
+
+async def extract_audio(query: str):
+    loop = asyncio.get_running_loop()
+    def _extract():
+        with yt_dlp.YoutubeDL(YTDL_OPTIONS) as ydl:
+            info = ydl.extract_info(query, download=False)
+            if "entries" in info:
+                info = info["entries"][0]
+            return {
+                "title": info.get("title", "Không rõ tên"),
+                "url": info["url"],
+                "webpage_url": info.get("webpage_url", query),
+            }
+    return await loop.run_in_executor(None, _extract)
+
+async def play_next(guild: discord.Guild):
+    queue = get_music_queue(guild.id)
+    voice = guild.voice_client
+    if not voice or not voice.is_connected() or not queue:
+        music_now_playing.pop(guild.id, None)
+        return
+
+    track = queue.pop(0)
+    music_now_playing[guild.id] = track
+
+    def after_play(error):
+        if error:
+            print(f"⚠️ Lỗi phát nhạc guild {guild.id}: {error}")
+        fut = asyncio.run_coroutine_threadsafe(play_next(guild), bot.loop)
+        try:
+            fut.result()
+        except Exception as e:
+            print(f"⚠️ Không thể phát bài tiếp theo: {e}")
+
+    try:
+        source = discord.FFmpegPCMAudio(track["url"], **FFMPEG_OPTIONS)
+        voice.play(source, after=after_play)
+    except Exception as e:
+        music_now_playing.pop(guild.id, None)
+        print(f"⚠️ Không thể phát nhạc: {e}")
+        await play_next(guild)
+
+
+async def keep_voice_connected(guild_id: int, channel_id: int):
+    """Giữ bot trong voice channel và tự kết nối lại khi bị ngắt."""
+    await bot.wait_until_ready()
+
+    while not bot.is_closed():
+        try:
+            guild = bot.get_guild(guild_id)
+            if not guild:
+                return
+
+            channel = guild.get_channel(channel_id)
+            if not isinstance(channel, discord.VoiceChannel):
+                return
+
+            voice = guild.voice_client
+
+            if voice is None:
+                await channel.connect(reconnect=True, timeout=30)
+            elif not voice.is_connected():
+                await voice.disconnect(force=True)
+                await asyncio.sleep(2)
+                await channel.connect(reconnect=True, timeout=30)
+            elif voice.channel and voice.channel.id != channel_id:
+                await voice.move_to(channel)
+
+            await asyncio.sleep(10)
+
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            print(f"⚠️ Treo call guild {guild_id}: {e}")
+            await asyncio.sleep(5)
+
+def start_voice_keepalive(guild_id: int, channel_id: int):
+    old_task = voice_keepalive_tasks.get(guild_id)
+    if old_task and not old_task.done():
+        old_task.cancel()
+
+    voice_keepalive_tasks[guild_id] = asyncio.create_task(
+        keep_voice_connected(guild_id, channel_id)
+    )
+
+def stop_voice_keepalive(guild_id: int):
+    task = voice_keepalive_tasks.pop(guild_id, None)
+    if task and not task.done():
+        task.cancel()
 
 afk_users = {}
 user_birthdays = {}         
@@ -133,9 +268,21 @@ async def on_ready():
     if not update_stats_loop.is_running():
         update_stats_loop.start()
     
+    # Khôi phục các kênh treo call sau khi bot restart.
+    db_cursor.execute("SELECT guild_id, channel_id FROM voice_channels")
+    for saved_guild_id, saved_channel_id in db_cursor.fetchall():
+        start_voice_keepalive(saved_guild_id, saved_channel_id)
+
     try:
         synced = await bot.tree.sync()
-        print(f"✨ Đã đồng bộ thành công {len(synced)} lệnh slash (/).")
+        print(f"✨ Đã đồng bộ {len(synced)} lệnh slash (/). Lệnh bot prefix dùng `!`.")
+        # Khôi phục các nút bình chọn sau khi bot restart.
+        db_cursor.execute("SELECT message_id, options FROM polls")
+        for poll_message_id, options_text in db_cursor.fetchall():
+            options = options_text.split("\n")
+            bot.add_view(PollView(poll_message_id, options), message_id=poll_message_id)
+
+
     except Exception as e:
         print(f"⚠️ Lỗi đồng bộ lệnh slash: {e}")
 
@@ -336,6 +483,191 @@ async def configlevelrole(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
+class PollView(discord.ui.View):
+    def __init__(self, poll_message_id: int, options: list[str]):
+        super().__init__(timeout=None)
+        self.poll_message_id = poll_message_id
+        self.options = options
+        button_styles = [discord.ButtonStyle.primary, discord.ButtonStyle.success,
+                          discord.ButtonStyle.secondary, discord.ButtonStyle.danger,
+                          discord.ButtonStyle.primary]
+        for i, option in enumerate(options):
+            button = discord.ui.Button(
+                label=option[:80],
+                style=button_styles[i],
+                custom_id=f"poll:{poll_message_id}:{i}"
+            )
+            button.callback = self.make_callback(i)
+            self.add_item(button)
+
+    def make_callback(self, index: int):
+        async def callback(interaction: discord.Interaction):
+            channel = interaction.channel
+            if not channel:
+                await interaction.response.send_message("❌ Không tìm thấy kênh bình chọn.", ephemeral=True)
+                return
+            try:
+                message = await channel.fetch_message(self.poll_message_id)
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                await interaction.response.send_message("❌ Không tìm thấy bảng bình chọn.", ephemeral=True)
+                return
+
+            # Mỗi người chỉ được chọn 1 đáp án.
+            user_id = interaction.user.id
+            for reaction in message.reactions:
+                try:
+                    users = [u async for u in reaction.users()]
+                    if any(u.id == user_id for u in users):
+                        await reaction.remove(interaction.user)
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+
+            emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+            await message.add_reaction(emojis[index])
+            await interaction.response.send_message(
+                f"✅ Đã bình chọn **{self.options[index]}**!", ephemeral=True
+            )
+        return callback
+
+
+class PollModal(discord.ui.Modal, title="🗳️ Tạo bảng bình chọn"):
+    question = discord.ui.TextInput(
+        label="Câu hỏi",
+        placeholder="Nhập câu hỏi bình chọn...",
+        required=True,
+        max_length=256
+    )
+    option1 = discord.ui.TextInput(
+        label="Option 1",
+        placeholder="Nhập lựa chọn 1...",
+        required=True,
+        max_length=100
+    )
+    option2 = discord.ui.TextInput(
+        label="Option 2",
+        placeholder="Nhập lựa chọn 2...",
+        required=True,
+        max_length=100
+    )
+    option3 = discord.ui.TextInput(
+        label="Option 3",
+        placeholder="Nhập lựa chọn 3 (không bắt buộc)...",
+        required=False,
+        max_length=100
+    )
+    option4 = discord.ui.TextInput(
+        label="Option 4",
+        placeholder="Nhập lựa chọn 4 (không bắt buộc)...",
+        required=False,
+        max_length=100
+    )
+
+    def __init__(self, channel: discord.TextChannel):
+        super().__init__()
+        self.channel = channel
+
+    async def on_submit(self, interaction: discord.Interaction):
+        options = [str(x).strip() for x in [self.option1.value, self.option2.value, self.option3.value, self.option4.value] if str(x).strip()]
+        if len(options) < 2:
+            await interaction.response.send_message("❌ Cần ít nhất 2 lựa chọn!", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title="🗳️  BÌNH CHỌN",
+            description=(
+                f"## {self.question.value}\n\n"
+                "👇 **Bấm vào một ô bên dưới để bình chọn!**\n"
+                "🔒 *Mỗi người chỉ được chọn 1 phương án.*"
+            ),
+            color=discord.Color.blurple()
+        )
+        embed.add_field(
+            name="📌 Các lựa chọn",
+            value="\n".join(f"**{i+1}.** {opt}" for i, opt in enumerate(options)),
+            inline=False
+        )
+        embed.set_footer(text=f"Tạo bởi {interaction.user.display_name} • {FOOTER_AUTHOR}")
+        embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
+
+        poll_message = await self.channel.send(embed=embed)
+        view = PollView(poll_message.id, options)
+        await poll_message.edit(view=view)
+
+        db_cursor.execute(
+            "INSERT INTO polls (message_id, guild_id, channel_id, question, options, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+            (poll_message.id, interaction.guild.id, self.channel.id, self.question.value, "\n".join(options), interaction.user.id)
+        )
+        db_conn.commit()
+
+        await interaction.response.send_message(
+            f"✅ Đã tạo bảng bình chọn tại {self.channel.mention}!", ephemeral=True
+        )
+
+
+@bot.tree.command(name="binhchon", description="Mở form tạo bảng bình chọn (Admin)")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def binhchon(interaction: discord.Interaction):
+    if not isinstance(interaction.channel, discord.TextChannel):
+        await interaction.response.send_message("❌ Lệnh này chỉ dùng được trong kênh text!", ephemeral=True)
+        return
+    await interaction.response.send_modal(PollModal(interaction.channel))
+
+
+@bot.tree.command(name="xembinhchon", description="Xem kết quả bình chọn (Admin)")
+@discord.app_commands.describe(message_id="ID tin nhắn của bảng bình chọn")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def xembinhchon(interaction: discord.Interaction, message_id: str):
+    try:
+        poll_id = int(message_id)
+    except ValueError:
+        await interaction.response.send_message("❌ Message ID không hợp lệ!", ephemeral=True)
+        return
+
+    db_cursor.execute("SELECT channel_id, options, question FROM polls WHERE message_id = ? AND guild_id = ?", (poll_id, interaction.guild.id))
+    row = db_cursor.fetchone()
+    if not row:
+        await interaction.response.send_message("❌ Không tìm thấy bảng bình chọn này.", ephemeral=True)
+        return
+
+    channel = interaction.guild.get_channel(row[0])
+    if not channel:
+        await interaction.response.send_message("❌ Không tìm thấy kênh chứa bảng bình chọn.", ephemeral=True)
+        return
+
+    try:
+        poll_message = await channel.fetch_message(poll_id)
+    except (discord.NotFound, discord.Forbidden):
+        await interaction.response.send_message("❌ Không thể lấy tin nhắn bình chọn.", ephemeral=True)
+        return
+
+    options = row[1].split("\n")
+    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    lines = []
+    total = 0
+    counts = []
+    for i, option in enumerate(options):
+        count = 0
+        for reaction in poll_message.reactions:
+            if str(reaction.emoji) == emojis[i]:
+                count = max(reaction.count - 1, 0)
+                break
+        counts.append(count)
+        total += count
+
+    for i, option in enumerate(options):
+        percent = (counts[i] / total * 100) if total else 0
+        bar = "🟦" * min(10, round(percent / 10)) + "⬜" * max(0, 10 - round(percent / 10))
+        lines.append(f"**{i+1}. {option}**\n{bar} **{counts[i]} vote** ({percent:.0f}%)")
+
+    embed = discord.Embed(
+        title="📊  KẾT QUẢ BÌNH CHỌN",
+        description=f"## {row[2]}\n\n" + "\n\n".join(lines),
+        color=discord.Color.green()
+    )
+    embed.set_footer(text=f"Tổng số lượt vote: {total}")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 @bot.tree.command(name="setwelcome", description="Cài đặt welcome và GIF nhỏ (Admin)")
 @discord.app_commands.describe(message="Nội dung", channel="Kênh", gif_file="File GIF")
 @discord.app_commands.checks.has_permissions(administrator=True)
@@ -479,6 +811,154 @@ async def check_birthdays():
                         await channel.send(embed=embed, file=discord.File(BIRTHDAY_GIF_PATH, filename="hb_gif.gif"))
                     else:
                         await channel.send(embed=embed)
+
+
+@bot.command(name="treocall")
+@commands.has_permissions(administrator=True)
+async def treocall(ctx):
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        await ctx.send("❌ Bạn phải vào kênh voice trước rồi dùng `!treocall`.")
+        return
+    channel = ctx.author.voice.channel
+    try:
+        voice = ctx.guild.voice_client
+        if voice and voice.channel and voice.channel.id != channel.id:
+            await voice.move_to(channel)
+        elif not voice or not voice.is_connected():
+            await channel.connect(reconnect=True, timeout=30)
+
+        db_cursor.execute("""
+            INSERT INTO voice_channels (guild_id, channel_id)
+            VALUES (?, ?)
+            ON CONFLICT(guild_id) DO UPDATE SET channel_id = ?
+        """, (ctx.guild.id, channel.id, channel.id))
+        db_conn.commit()
+        start_voice_keepalive(ctx.guild.id, channel.id)
+        await ctx.send(f"📞 Đã bật treo call 24/7 tại {channel.mention}.")
+    except Exception as e:
+        await ctx.send(f"❌ Không thể vào voice: `{e}`")
+
+
+@bot.command(name="dungtreocall")
+@commands.has_permissions(administrator=True)
+async def dungtreocall(ctx):
+    stop_voice_keepalive(ctx.guild.id)
+    db_cursor.execute("DELETE FROM voice_channels WHERE guild_id = ?", (ctx.guild.id,))
+    db_conn.commit()
+    voice = ctx.guild.voice_client
+    if voice:
+        try:
+            await voice.disconnect(force=True)
+        except Exception:
+            pass
+    await ctx.send("📴 Đã dừng treo call và bot đã rời voice.")
+
+
+@bot.command(name="checktreocall")
+@commands.has_permissions(administrator=True)
+async def checktreocall(ctx):
+    db_cursor.execute("SELECT channel_id FROM voice_channels WHERE guild_id = ?", (ctx.guild.id,))
+    row = db_cursor.fetchone()
+    voice = ctx.guild.voice_client
+    if row:
+        channel = ctx.guild.get_channel(row[0])
+        status = "🟢 Đang kết nối" if voice and voice.is_connected() else "🟡 Đang tự kết nối lại"
+        await ctx.send(f"📞 **Treo call:** {status}\n🎙️ **Kênh:** {channel.mention if channel else row[0]}")
+    else:
+        await ctx.send("⚪ Server này chưa bật treo call.")
+
+
+@bot.command(name="play")
+async def play(ctx, *, query: str):
+    """Phát nhạc từ URL hoặc tìm kiếm theo tên bài."""
+    if not ctx.guild:
+        return
+
+    voice = ctx.guild.voice_client
+    if not voice or not voice.is_connected():
+        if not getattr(ctx.author, "voice", None) or not ctx.author.voice:
+            await ctx.send("❌ Bạn phải vào voice trước để bot biết kênh cần vào.")
+            return
+        try:
+            voice = await ctx.author.voice.channel.connect(reconnect=True, timeout=30)
+        except Exception as e:
+            await ctx.send(f"❌ Không thể vào voice: `{e}`")
+            return
+
+    try:
+        track = await extract_audio(query)
+    except Exception as e:
+        await ctx.send(f"❌ Không tìm được bài nhạc: `{e}`")
+        return
+
+    queue = get_music_queue(ctx.guild.id)
+    queue.append(track)
+
+    if not voice.is_playing() and not voice.is_paused():
+        await play_next(ctx.guild)
+        await ctx.send(f"🎵 Đang phát: **{track['title']}**")
+    else:
+        await ctx.send(f"➕ Đã thêm vào hàng chờ: **{track['title']}** (vị trí {len(queue)})")
+
+
+@bot.command(name="skip")
+async def skip(ctx):
+    voice = ctx.guild.voice_client if ctx.guild else None
+    if not voice or not voice.is_playing():
+        await ctx.send("❌ Hiện không có bài nào đang phát.")
+        return
+    voice.stop()
+    await ctx.send("⏭️ Đã chuyển bài.")
+
+
+@bot.command(name="pause")
+async def pause(ctx):
+    voice = ctx.guild.voice_client if ctx.guild else None
+    if voice and voice.is_playing():
+        voice.pause()
+        await ctx.send("⏸️ Đã tạm dừng nhạc.")
+    else:
+        await ctx.send("❌ Không có nhạc đang phát.")
+
+
+@bot.command(name="resume")
+async def resume(ctx):
+    voice = ctx.guild.voice_client if ctx.guild else None
+    if voice and voice.is_paused():
+        voice.resume()
+        await ctx.send("▶️ Đã tiếp tục phát nhạc.")
+    else:
+        await ctx.send("❌ Nhạc hiện không bị tạm dừng.")
+
+
+@bot.command(name="stop")
+async def stop(ctx):
+    if not ctx.guild:
+        return
+    queue = get_music_queue(ctx.guild.id)
+    queue.clear()
+    music_now_playing.pop(ctx.guild.id, None)
+    voice = ctx.guild.voice_client
+    if voice and voice.is_playing():
+        voice.stop()
+    await ctx.send("⏹️ Đã dừng nhạc và xoá hàng chờ.")
+
+
+@bot.command(name="queue")
+async def queue_cmd(ctx):
+    if not ctx.guild:
+        return
+    queue = get_music_queue(ctx.guild.id)
+    current = music_now_playing.get(ctx.guild.id)
+    lines = []
+    if current:
+        lines.append(f"🎵 **Đang phát:** {current['title']}")
+    if queue:
+        lines.append("\n".join(f"**{i}.** {t['title']}" for i, t in enumerate(queue, 1)))
+    if not lines:
+        await ctx.send("📭 Hàng chờ đang trống.")
+        return
+    await ctx.send("📜 **QUEUE**\n" + "\n".join(lines))
 
 
 @bot.command(name="ban")
