@@ -4,7 +4,6 @@ import os
 import datetime
 import sqlite3
 import math
-from google import genai
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -13,8 +12,6 @@ intents.presences = True
 intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
-
-ai_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 db_conn = sqlite3.connect("database.db")
 db_cursor = db_conn.cursor()
@@ -497,21 +494,9 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # --- TỰ ĐỘNG TRÒ CHUYỆN VỚI AI KHI NHẮN TIN BÌNH THƯỜNG ---
-    user_prompt = message.content.strip()
-    if user_prompt and not message.content.startswith("!"):
-        async with message.channel.typing():
-            try:
-                response = ai_client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=user_prompt,
-                    config={
-                        'system_instruction': "Bạn là một trợ lý AI cởi mở, thân thiện, nói chuyện tự nhiên giống như một người bạn đang chat."
-                    }
-                )
-                await message.reply(response.text)
-            except Exception as e:
-                await message.reply(f"⚠️ AI đang gặp lỗi: {e}")
+    # --- PHẢN HỒI KHI BỊ PING ---
+    if bot.user.mentioned_in(message) and not message.mention_everyone:
+        await message.reply("Gì đấy bro? Gọi tui có chuyện gì không? 👀")
         return
 
     # --- HỆ THỐNG TÍNH XP & LEVEL ---
