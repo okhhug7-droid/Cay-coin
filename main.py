@@ -5,11 +5,13 @@ import datetime
 import sqlite3
 import math
 
-# Khởi tạo bot với Intents cần thiết
+# Khởi tạo bot với đầy đủ Intents cần thiết (đặc biệt là guilds cho hệ thống thống kê)
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.presences = True
+intents.guilds = True
+intents.voice_states = True # Bắt buộc phải có để bot nhận diện trạng thái voice/call
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -28,13 +30,21 @@ db_cursor.execute("""
     )
 """)
 
-# Bảng mới: Lưu cấu hình Role thưởng theo cấp độ cho từng server
+# Bảng lưu cấu hình Role thưởng theo cấp độ cho từng server
 db_cursor.execute("""
     CREATE TABLE IF NOT EXISTS level_roles (
         guild_id INTEGER,
         level INTEGER,
         role_id INTEGER,
         PRIMARY KEY (guild_id, level)
+    )
+""")
+
+# Bảng lưu kênh thông báo lên cấp riêng cho từng server
+db_cursor.execute("""
+    CREATE TABLE IF NOT EXISTS server_level_channels (
+        guild_id INTEGER PRIMARY KEY,
+        channel_id INTEGER
     )
 """)
 db_conn.commit()
@@ -158,6 +168,33 @@ async def leaderboard(interaction: discord.Interaction):
     embed.set_footer(text=f"Yêu cầu bởi {interaction.user.display_name} | {FOOTER_AUTHOR}", icon_url=interaction.user.display_avatar.url)
 
     await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="setchanellvl", description="Cài đặt kênh riêng để bot gửi thông báo lên cấp (Admin)")
+@discord.app_commands.describe(channel="Kênh văn bản bạn muốn dùng để thông báo lên cấp")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setchanellvl(interaction: discord.Interaction, channel: discord.TextChannel):
+    db_cursor.execute("""
+        INSERT INTO server_level_channels (guild_id, channel_id) 
+        VALUES (?, ?) 
+        ON CONFLICT(guild_id) DO UPDATE SET channel_id = ?
+    """, (interaction.guild.id, channel.id, channel.id))
+    db_conn.commit()
+
+    embed = discord.Embed(
+        title="✨ Cài đặt kênh thông báo lên cấp thành công",
+        description=f"Từ nay các thông báo lên cấp và nhận role thưởng sẽ được gửi trực tiếp tại {channel.mention}!",
+        color=discord.Color.green()
+    )
+    embed.set_footer(text=f"Thực hiện bởi {interaction.user.display_name} | {FOOTER_AUTHOR}")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@setchanellvl.error
+async def setchanellvl_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+    if isinstance(error, discord.app_commands.MissingPermissions):
+        await interaction.response.send_message("⛔ Bạn cần quyền **Quản trị viên (Administrator)** để sử dụng lệnh này.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"❌ Lỗi: {error}", ephemeral=True)
 
 
 # --- BẢNG NHẬP ID ROLE THEO CẤP ĐỘ (MODAL TÙY CHỌN LINH HOẠT) ---
@@ -557,6 +594,41 @@ async def before_update_stats_loop():
 
 
 # =========================================================================
+# PHẦN 5.1: TÍNH NĂNG TREO CALL (VOICE AFK / JOIN VC)
+# =========================================================================
+
+@bot.tree.command(name="joinvc", description="Lệnh bắt bot vào phòng thoại (call) mà bạn đang đứng để treo")
+async def joinvc(interaction: discord.Interaction):
+    if not interaction.user.voice or not interaction.user.voice.channel:
+        await interaction.response.send_message("❌ Bạn cần vào một phòng thoại (voice channel) trước khi dùng lệnh này!", ephemeral=True)
+        return
+
+    voice_channel = interaction.user.voice.channel
+    
+    # Kiểm tra xem bot đã ở trong phòng thoại nào của server này chưa
+    if interaction.guild.voice_client:
+        try:
+            await interaction.guild.voice_client.move_to(voice_channel)
+            await interaction.response.send_message(f"🎧 Đã di chuyển bot sang phòng thoại: **{voice_channel.name}**!", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Không thể di chuyển phòng thoại: {e}", ephemeral=True)
+    else:
+        try:
+            await voice_channel.connect(self_deaf=True) # Tự động bật tắt âm (deafen) cho bot đỡ ồn
+            await interaction.response.send_message(f"🎧 Bot đã vào phòng thoại **{voice_channel.name}** để treo call thành công!", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Không thể kết nối vào phòng thoại: {e}", ephemeral=True)
+
+@bot.tree.command(name="leavevc", description="Đuổi bot ra khỏi phòng thoại")
+async def leavevc(interaction: discord.Interaction):
+    if interaction.guild.voice_client:
+        await interaction.guild.voice_client.disconnect()
+        await interaction.response.send_message("👋 Đã cho bot rời khỏi phòng thoại!", ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ Bot hiện không ở trong phòng thoại nào cả!", ephemeral=True)
+
+
+# =========================================================================
 # PHẦN 6: SỰ KIỆN CHAT, TÍCH LUỸ XP & TỰ ĐỘNG TRAO ROLE (MAX LEVEL 300)
 # =========================================================================
 
@@ -590,6 +662,11 @@ async def on_message(message):
 
         update_user_data(user_id, guild_id, xp, level)
 
+        # Lấy kênh thông báo level riêng (nếu đã cài bằng /setchanellvl)
+        db_cursor.execute("SELECT channel_id FROM server_level_channels WHERE guild_id = ?", (guild_id,))
+        chan_row = db_cursor.fetchone()
+        target_channel = message.guild.get_channel(chan_row[0]) if chan_row and chan_row[0] else message.channel
+
         if leveled_up:
             embed = discord.Embed(
                 title="🎉 CHÚC MỪNG LÊN CẤP! 🚀",
@@ -598,7 +675,10 @@ async def on_message(message):
             )
             embed.set_thumbnail(url=message.author.display_avatar.url)
             embed.set_footer(text=FOOTER_AUTHOR)
-            await message.channel.send(embed=embed)
+            try:
+                await target_channel.send(embed=embed)
+            except:
+                await message.channel.send(embed=embed)
 
             db_cursor.execute("SELECT role_id FROM level_roles WHERE guild_id = ? AND level = ?", (guild_id, level))
             role_row = db_cursor.fetchone()
@@ -608,7 +688,8 @@ async def on_message(message):
                 if role:
                     try:
                         await message.author.add_roles(role, reason=f"Đạt cấp độ {level} hệ thống tự động trao role.")
-                        await message.channel.send(f"🎁 {message.author.mention} đã nhận được phần thưởng tự động: **{role.name}** do đạt cấp độ **{level}**! 🎉")
+                        reward_text = f"🎁 {message.author.mention} đã nhận được phần thưởng tự động: **{role.name}** do đạt cấp độ **{level}**! 🎉"
+                        await target_channel.send(reward_text)
                     except Exception as e:
                         print(f"⚠️ Không thể trao role cho user {message.author.name}: {e}")
 
