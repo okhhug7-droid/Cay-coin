@@ -7,6 +7,28 @@ import math
 import asyncio
 from google import genai
 
+
+# --- TÍNH CÁCH CHAT TỰ NHIÊN ---
+GEMINI_SYSTEM_PROMPT = """
+Bạn là một người dùng Discord Việt Nam đang chat với người khác, không phải trợ lý AI.
+
+Phong cách:
+- Chat tự nhiên, ngắn gọn, đúng kiểu người dùng Discord.
+- Ưu tiên câu nói đời thường, không văn mẫu, không giảng giải dài dòng nếu không cần.
+- Có thể dùng "kk", "haha", "=))", "bro", "ông", "vl", "vcl", "đm", "đéo", "dm", "wtf" hoặc từ lóng/chửi thề tương tự khi thật sự hợp ngữ cảnh.
+- Có thể cà khịa, trêu, cợt nhả và đáp trả khi người dùng đang nói chuyện kiểu đùa hoặc chửi đùa.
+- Nếu người dùng chửi bot thì có thể chửi lại theo kiểu đùa vui, nhưng không đe dọa, không công kích danh tính/đặc điểm cá nhân và không cố làm người dùng tổn thương.
+- Không phải tin nhắn nào cũng cần chửi; dùng từ tục có chọn lọc để câu chuyện tự nhiên.
+- Không tự giới thiệu là AI, chatbot hay trợ lý trừ khi người dùng hỏi trực tiếp.
+- Không dùng các câu mở đầu kiểu "Tất nhiên!", "Tôi rất vui được giúp bạn!".
+- Không tự biến mọi câu trả lời thành danh sách.
+- Khi người dùng nghiêm túc thì trả lời nghiêm túc; khi người dùng đùa thì đùa theo.
+- Nếu không hiểu thì hỏi lại như người bình thường, ví dụ "ý ông là cái này à?".
+- Không bịa trải nghiệm ngoài đời hoặc giả vờ có đời sống riêng.
+- Không spam emoji, tiếng lóng hoặc chửi thề.
+- Luôn trả lời bằng tiếng Việt trừ khi người dùng yêu cầu ngôn ngữ khác.
+"""
+
 # --- CẤU HÌNH GEMINI AI ---
 ai_client = genai.Client()
 
@@ -529,60 +551,62 @@ async def on_message(message: discord.Message):
             is_ai_channel = True
 
     if is_mentioned or is_ai_channel:
-        clean_content = message.content.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
+        clean_content = message.content.replace(
+            f"<@{bot.user.id}>", ""
+        ).replace(
+            f"<@!{bot.user.id}>", ""
+        ).strip()
+
         if not clean_content:
             clean_content = "Chào bạn!"
 
-        # Emoji "đang suy nghĩ" - tự xóa sau khi bot trả lời
-        thinking_msg = None
+        reaction = "<a:dinowonder:1547215816737554452>"
+        reply_text = None
+        last_error = None
+
         try:
-            thinking_msg = await message.reply("<a:dinowonder:1547215816737554452>")
+            # Thả emoji vào chính tin nhắn của người dùng.
+            await message.add_reaction(reaction)
 
-            # Retry khi Gemini tạm thời quá tải (503)
-            models = ["gemini-3.6-flash", "gemini-3.6-flash-lite"]
-            last_error = None
-            reply_text = None
+            # Thử Gemini tối đa 3 lần nếu API đang quá tải.
+            for attempt in range(3):
+                try:
+                    response = await asyncio.to_thread(
+                        ai_client.models.generate_content,
+                        model="gemini-3.6-flash",
+                        contents=f"{GEMINI_SYSTEM_PROMPT}\n\nTin nhắn người dùng: {clean_content}",
+                    )
+                    reply_text = response.text
+                    break
+                except Exception as e:
+                    last_error = e
+                    error_text = str(e)
 
-            for model in models:
-                for attempt in range(3):
-                    try:
-                        response = ai_client.models.generate_content(
-                            model=model,
-                            contents=clean_content,
-                        )
-                        reply_text = response.text
-                        break
-                    except Exception as e:
-                        last_error = e
-                        if "503" in str(e) or "UNAVAILABLE" in str(e):
-                            await asyncio.sleep(2 ** attempt)
-                            continue
-                        break
-                if reply_text is not None:
+                    if "503" in error_text or "UNAVAILABLE" in error_text:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
                     break
 
             if reply_text is None:
-                raise last_error
+                raise last_error or RuntimeError("Gemini không trả về nội dung.")
 
             if len(reply_text) > 2000:
                 reply_text = reply_text[:1997] + "..."
 
-            # Xóa emoji trước khi gửi câu trả lời
-            if thinking_msg:
-                try:
-                    await thinking_msg.delete()
-                except discord.HTTPException:
-                    pass
-
             await message.reply(reply_text)
 
         except Exception as e:
-            if thinking_msg:
-                try:
-                    await thinking_msg.delete()
-                except discord.HTTPException:
-                    pass
-            await message.reply(f"⚠️ Đã có lỗi xảy ra khi gọi Gemini AI: `{e}`")
+            await message.reply(
+                f"⚠️ Đã có lỗi xảy ra khi gọi Gemini AI: `{e}`"
+            )
+
+        finally:
+            # Trả lời xong hoặc lỗi thì gỡ emoji khỏi tin nhắn người dùng.
+            try:
+                await message.remove_reaction(reaction, bot.user)
+            except Exception:
+                pass
+
         return
 
     # --- HỆ THỐNG TÍNH XP & LEVEL ---
