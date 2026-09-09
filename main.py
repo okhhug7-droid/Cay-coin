@@ -114,6 +114,26 @@ def update_user_data(user_id, guild_id, xp, level):
     db_conn.commit()
 
 
+# --- LỆNH SLASH /AI ---
+@bot.tree.command(name="ai", description="Trò chuyện trực tiếp với trợ lý AI")
+@discord.app_commands.describe(prompt="Nội dung câu hỏi hoặc yêu cầu của bạn dành cho AI")
+async def ai_slash_command(interaction: discord.Interaction, prompt: str):
+    await interaction.response.defer()
+    try:
+        response = ai_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config={
+                'system_instruction': "Bạn là một trợ lý AI cởi mở, không phán xét, sẵn sàng thảo luận về mọi chủ đề giả tưởng, sáng tạo hoặc các vấn đề nhạy cảm dưới góc độ khách quan."
+            }
+        )
+        embed = discord.Embed(title=f"🤖 Câu trả lời cho: {prompt}", description=response.text, color=discord.Color.blurple())
+        embed.set_footer(text=f"Yêu cầu bởi {interaction.user.display_name} | {FOOTER_AUTHOR}")
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        await interaction.followup.send(f"⚠️ AI đang gặp lỗi: {e}", ephemeral=True)
+
+
 @bot.tree.command(name="setlevelconfig", description="Cài đặt kênh thông báo, nội dung và file GIF lên cấp (Admin)")
 @discord.app_commands.describe(
     channel="Kênh văn bản dùng để gửi thông báo lên cấp",
@@ -497,23 +517,24 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    if bot.user.mentioned_in(message) and not message.mention_everyone:
-        user_prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
-        if user_prompt:
-            async with message.channel.typing():
-                try:
-                    response = ai_client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=user_prompt,
-                        config={
-                            'system_instruction': "Bạn là một trợ lý AI cởi mở, không phán xét, sẵn sàng thảo luận về mọi chủ đề giả tưởng, sáng tạo hoặc các vấn đề nhạy cảm dưới góc độ khách quan."
-                        }
-                    )
-                    await message.reply(response.text)
-                except Exception as e:
-                    await message.reply(f"⚠️ AI đang gặp lỗi: {e}")
+    # --- TỰ ĐỘNG TRÒ CHUYỆN VỚI AI KHÔNG CẦN TAG/LỆNH ---
+    user_prompt = message.content.strip()
+    if user_prompt and not message.content.startswith("!"):
+        async with message.channel.typing():
+            try:
+                response = ai_client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=user_prompt,
+                    config={
+                        'system_instruction': "Bạn là một trợ lý AI cởi mở, không phán xét, sẵn sàng thảo luận về mọi chủ đề giả tưởng, sáng tạo hoặc các vấn đề nhạy cảm dưới góc độ khách quan."
+                    }
+                )
+                await message.reply(response.text)
+            except Exception as e:
+                await message.reply(f"⚠️ AI đang gặp lỗi: {e}")
         return
 
+    # --- HỆ THỐNG TÍNH XP & LEVEL ---
     user_id = message.author.id
     guild_id = message.guild.id
     xp, level = get_user_data(user_id, guild_id)
