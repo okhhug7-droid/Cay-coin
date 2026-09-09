@@ -4,6 +4,7 @@ import os
 import datetime
 import sqlite3
 import math
+import asyncio
 from google import genai
 
 # --- CẤU HÌNH GEMINI AI ---
@@ -532,21 +533,56 @@ async def on_message(message: discord.Message):
         if not clean_content:
             clean_content = "Chào bạn!"
 
-        async with message.channel.typing():
-            try:
-                response = ai_client.models.generate_content(
-                    model='gemini-3.6-flash',
-                    contents=clean_content,
-                )
-                reply_text = response.text
-                
-                if len(reply_text) > 2000:
-                    reply_text = reply_text[:1997] + "..."
-                
-                # Gửi tin nhắn dạng text thuần trực tiếp (không qua discord.Embed)
-                await message.reply(reply_text)
-            except Exception as e:
-                await message.reply(f"⚠️ Đã có lỗi xảy ra khi gọi Gemini AI: `{e}`")
+        # Emoji "đang suy nghĩ" - tự xóa sau khi bot trả lời
+        thinking_msg = None
+        try:
+            thinking_msg = await message.reply("<a:dinowonder:1547215816737554452>")
+
+            # Retry khi Gemini tạm thời quá tải (503)
+            models = ["gemini-3.6-flash", "gemini-3.6-flash-lite"]
+            last_error = None
+            reply_text = None
+
+            for model in models:
+                for attempt in range(3):
+                    try:
+                        response = ai_client.models.generate_content(
+                            model=model,
+                            contents=clean_content,
+                        )
+                        reply_text = response.text
+                        break
+                    except Exception as e:
+                        last_error = e
+                        if "503" in str(e) or "UNAVAILABLE" in str(e):
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                        break
+                if reply_text is not None:
+                    break
+
+            if reply_text is None:
+                raise last_error
+
+            if len(reply_text) > 2000:
+                reply_text = reply_text[:1997] + "..."
+
+            # Xóa emoji trước khi gửi câu trả lời
+            if thinking_msg:
+                try:
+                    await thinking_msg.delete()
+                except discord.HTTPException:
+                    pass
+
+            await message.reply(reply_text)
+
+        except Exception as e:
+            if thinking_msg:
+                try:
+                    await thinking_msg.delete()
+                except discord.HTTPException:
+                    pass
+            await message.reply(f"⚠️ Đã có lỗi xảy ra khi gọi Gemini AI: `{e}`")
         return
 
     # --- HỆ THỐNG TÍNH XP & LEVEL ---
