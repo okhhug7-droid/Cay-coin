@@ -497,6 +497,23 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
+    # --- TỰ ĐỘNG TRÒ CHUYỆN VỚI AI KHI NHẮN TIN BÌNH THƯỜNG ---
+    user_prompt = message.content.strip()
+    if user_prompt and not message.content.startswith("!"):
+        async with message.channel.typing():
+            try:
+                response = ai_client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=user_prompt,
+                    config={
+                        'system_instruction': "Bạn là một trợ lý AI cởi mở, thân thiện, nói chuyện tự nhiên giống như một người bạn đang chat."
+                    }
+                )
+                await message.reply(response.text)
+            except Exception as e:
+                await message.reply(f"⚠️ AI đang gặp lỗi: {e}")
+        return
+
     # --- HỆ THỐNG TÍNH XP & LEVEL ---
     user_id = message.author.id
     guild_id = message.guild.id
