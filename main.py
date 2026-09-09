@@ -5,13 +5,12 @@ import datetime
 import sqlite3
 import math
 
-# Khởi tạo bot với đầy đủ Intents cần thiết (đặc biệt là guilds cho hệ thống thống kê)
+# Khởi tạo bot với đầy đủ Intents cần thiết
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.presences = True
 intents.guilds = True
-intents.voice_states = True # Bắt buộc phải có để bot nhận diện trạng thái voice/call
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -47,6 +46,14 @@ db_cursor.execute("""
         channel_id INTEGER
     )
 """)
+
+# Bảng lưu role thưởng khi Boost server cho từng server
+db_cursor.execute("""
+    CREATE TABLE IF NOT EXISTS server_boost_roles (
+        guild_id INTEGER PRIMARY KEY,
+        role_id INTEGER
+    )
+""")
 db_conn.commit()
 
 # Lưu trữ dữ liệu tạm thời khác
@@ -69,8 +76,14 @@ WELCOME_CONFIG = {
 }
 
 BOOST_CONFIG = {
-    "message": "Cảm ơn {member} đã Boost máy chủ để giúp server ngày càng phát triển hơn! 🚀💎",
+    "channel_id": None,
+    "message": "Cảm ơn {member} đã Boost máy chủ **{server}** để giúp server ngày càng phát triển hơn! 🚀💎",
     "gif_path": "boost_gif.gif"
+}
+
+# Cấu hình file GIF thông báo lên cấp mặc định
+LEVELUP_CONFIG = {
+    "gif_path": "levelup_gif.gif"
 }
 
 SPECIAL_ADMIN_ID = 1180179460339810314
@@ -159,7 +172,7 @@ async def leaderboard(interaction: discord.Interaction):
     for index, (user_id, xp, level) in enumerate(top_users):
         member = interaction.guild.get_member(user_id)
         name = member.mention if member else f"Người dùng `{user_id}`"
-        medal = medal_emojis[index] if index < 10 else f"`#{index+1}`"
+        medal = medal_emojis[index] if index < 10 else f"#{index+1}"
         desc_list.append(f"{medal} {name} — Cấp: **{level}/300** (`{xp} XP`)")
 
     embed.description = "\n".join(desc_list)
@@ -197,33 +210,27 @@ async def setchanellvl_error(interaction: discord.Interaction, error: discord.ap
         await interaction.response.send_message(f"❌ Lỗi: {error}", ephemeral=True)
 
 
-# --- BẢNG NHẬP ID ROLE THEO CẤP ĐỘ (MODAL TÙY CHỌN LINH HOẠT) ---
+# --- BẢNG QUẢN LÝ VÀ GẮN ID ROLE THEO TỪNG LEVEL TRỰC QUAN ---
 
-class LevelRoleMultiModal(discord.ui.Modal, title="⚙️ Bảng Nhập ID Role Theo Cấp Độ"):
-    level_range_input = discord.ui.TextInput(
-        label="Nhập mốc Level (hoặc khoảng)",
-        style=discord.TextStyle.short,
-        placeholder="Ví dụ: 1, 25, 50, 100, <200, 1-300",
-        required=True,
-        max_length=50
-    )
-    
+class SingleLevelRoleModal(discord.ui.Modal, title="📌 Gắn ID Role Cho Mốc Level"):
+    def __init__(self, target_level: int):
+        super().__init__()
+        self.target_level = target_level
+        self.role_id_input.label = f"Nhập ID Role cho Level {target_level}"
+
     role_id_input = discord.ui.TextInput(
         label="ID của Role thưởng",
         style=discord.TextStyle.short,
-        placeholder="Nhập ID chuẩn của Role (Ví dụ: 123456789012345678)",
+        placeholder="Dán ID Role vào đây (Ví dụ: 123456789012345678)",
         required=True,
         max_length=25
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        raw_input_str = self.level_range_input.value.strip()
-        role_id_str = self.role_id_input.value.strip()
-
         try:
-            role_id = int(role_id_str)
+            role_id = int(self.role_id_input.value.strip())
         except ValueError:
-            await interaction.response.send_message("❌ ID Role phải là một con số hợp lệ!", ephemeral=True)
+            await interaction.response.send_message("❌ ID Role phải là một dãy số hợp lệ!", ephemeral=True)
             return
 
         role = interaction.guild.get_role(role_id)
@@ -235,65 +242,163 @@ class LevelRoleMultiModal(discord.ui.Modal, title="⚙️ Bảng Nhập ID Role 
             await interaction.response.send_message("❌ Bot không thể trao role này vì vị trí của nó cao hơn hoặc bằng role cao nhất của bot!", ephemeral=True)
             return
 
-        target_levels = set()
-
-        try:
-            if raw_input_str.startswith("<"):
-                limit = int(raw_input_str[1:].strip())
-                if not (1 <= limit <= 300):
-                    await interaction.response.send_message("❌ Giới hạn cấp độ phải nằm trong khoảng từ 1 đến 300!", ephemeral=True)
-                    return
-                for lvl in range(1, limit):
-                    target_levels.add(lvl)
-
-            elif "-" in raw_input_str:
-                parts = raw_input_str.split("-")
-                start = int(parts[0].strip())
-                end = int(parts[1].strip())
-                if not (1 <= start <= 300) or not (1 <= end <= 300) or start > end:
-                    await interaction.response.send_message("❌ Khoảng cấp độ phải nằm trong khoảng từ 1 đến 300!", ephemeral=True)
-                    return
-                for lvl in range(start, end + 1):
-                    target_levels.add(lvl)
-
-            else:
-                items = raw_input_str.split(",")
-                for item in items:
-                    lvl = int(item.strip())
-                    if not (1 <= lvl <= 300):
-                        await interaction.response.send_message(f"❌ Cấp độ {lvl} không hợp lệ (Phải từ 1 đến 300)!", ephemeral=True)
-                        return
-                    target_levels.add(lvl)
-
-        except ValueError:
-            await interaction.response.send_message("❌ Định dạng mốc level không hợp lệ! Hãy dùng dạng: `1`, `1, 25, 50`, `1-50`, hoặc `<200`.", ephemeral=True)
-            return
-
-        if not target_levels:
-            await interaction.response.send_message("❌ Không xác định được cấp độ nào từ dữ liệu bạn nhập!", ephemeral=True)
-            return
-
-        for lvl in target_levels:
-            db_cursor.execute("""
-                INSERT INTO level_roles (guild_id, level, role_id) 
-                VALUES (?, ?, ?) 
-                ON CONFLICT(guild_id, level) DO UPDATE SET role_id = ?
-            """, (interaction.guild.id, lvl, role.id, role.id))
+        db_cursor.execute("""
+            INSERT INTO level_roles (guild_id, level, role_id) 
+            VALUES (?, ?, ?) 
+            ON CONFLICT(guild_id, level) DO UPDATE SET role_id = ?
+        """, (interaction.guild.id, self.target_level, role.id, role.id))
         db_conn.commit()
 
-        embed = discord.Embed(
-            title="✨ Thiết lập Role Thưởng Thành Công",
-            description=f"Đã liên kết **{len(target_levels)} mốc cấp độ** với role {role.mention} (ID: `{role.id}`)",
-            color=discord.Color.green()
+        embed, view = await LevelManagementDashboard.create_dashboard(interaction.guild, page=0)
+        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.followup.send(f"✨ Đã gán thành công role {role.mention} cho **Level {self.target_level}**!", ephemeral=True)
+
+
+class LevelSelectDropdown(discord.ui.Select):
+    def __init__(self, options_list, current_page):
+        self.current_page = current_page
+        super().__init__(
+            placeholder="🎯 Chọn mốc level bên dưới để gắn ID Role...",
+            min_values=1,
+            max_values=1,
+            options=options_list
         )
-        embed.set_footer(text=f"Thực hiện bởi {interaction.user.display_name} | {FOOTER_AUTHOR}")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_level = int(self.values[0])
+        await interaction.response.send_modal(SingleLevelRoleModal(target_level=selected_level))
 
 
-@bot.tree.command(name="configlevelrole", description="Mở bảng nhập nhanh ID role cho các mốc level tùy chọn (Admin)")
+class LevelManagementDashboard(discord.ui.View):
+    def __init__(self, guild: discord.Guild, page: int = 0):
+        super().__init__(timeout=180)
+        self.guild = guild
+        self.page = page
+        self.levels_per_page = 25  
+        self.max_pages = math.ceil(300 / self.levels_per_page)
+        self.update_components()
+
+    @classmethod
+    async def create_dashboard(cls, guild: discord.Guild, page: int = 0):
+        view = cls(guild, page)
+        embed = await view.build_embed()
+        return embed, view
+
+    async def build_embed(self):
+        db_cursor.execute("SELECT level, role_id FROM level_roles WHERE guild_id = ?", (self.guild.id,))
+        configured_roles = {row[0]: row[1] for row in db_cursor.fetchall()}
+
+        embed = discord.Embed(
+            title=f"⚙️ BẢNG QUẢN LÝ ROLE THƯỞNG LEVEL ({self.guild.name})",
+            description=(
+                "Danh sách các mốc cấp độ và role phần thưởng hiện tại của server.\n"
+                "• Sử dụng **Menu chọn bên dưới** để chọn level cần gắn/đổi ID Role.\n"
+                "• Sử dụng nút **Xóa Role** để gỡ bỏ phần thưởng của level đó."
+            ),
+            color=discord.Color.blurple()
+        )
+
+        start_lvl = self.page * self.levels_per_page + 1
+        end_lvl = min((self.page + 1) * self.levels_per_page, 300)
+
+        lines = []
+        for lvl in range(start_lvl, end_lvl + 1):
+            role_id = configured_roles.get(lvl)
+            if role_id:
+                role = self.guild.get_role(role_id)
+                role_str = role.mention if role else f"⚠️ `ID {role_id} (Đã xoá)`"
+                lines.append(f"• **Level {lvl:3d}**: {role_str}")
+            else:
+                lines.append(f"• **Level {lvl:3d}**: `Chưa thiết lập`")
+
+        embed.add_field(name=f"📋 Mốc Level (Trang {self.page + 1}/{self.max_pages}): [ {start_lvl} — {end_lvl} ]", value="\n".join(lines), inline=False)
+        embed.set_footer(text=f"Trang {self.page + 1}/{self.max_pages} | {FOOTER_AUTHOR}")
+        return embed
+
+    def update_components(self):
+        self.clear_items()
+
+        start_lvl = self.page * self.levels_per_page + 1
+        end_lvl = min((self.page + 1) * self.levels_per_page, 300)
+
+        options = []
+        db_cursor.execute("SELECT level, role_id FROM level_roles WHERE guild_id = ?", (self.guild.id,))
+        configured_roles = {row[0]: row[1] for row in db_cursor.fetchall()}
+
+        for lvl in range(start_lvl, end_lvl + 1):
+            has_role = lvl in configured_roles
+            desc = f"Đã có Role (ID: {configured_roles[lvl]})" if has_role else "Chưa cài đặt Role"
+            options.append(discord.SelectOption(
+                label=f"Level {lvl}",
+                value=str(lvl),
+                description=desc,
+                emoji="🎁" if has_role else "📌"
+            ))
+
+        self.add_item(LevelSelectDropdown(options, self.page))
+
+        btn_prev = discord.ui.Button(label="◀️ Trang Trước", style=discord.ButtonStyle.secondary, disabled=(self.page == 0))
+        btn_prev.callback = self.prev_page_callback
+        self.add_item(btn_prev)
+
+        btn_next = discord.ui.Button(label="Trang Sau ▶️", style=discord.ButtonStyle.secondary, disabled=(self.page >= self.max_pages - 1))
+        btn_next.callback = self.next_page_callback
+        self.add_item(btn_next)
+
+        btn_clear = discord.ui.Button(label="🗑️ Gỡ Role Level...", style=discord.ButtonStyle.danger)
+        btn_clear.callback = self.clear_role_callback
+        self.add_item(btn_clear)
+
+    async def prev_page_callback(self, interaction: discord.Interaction):
+        if self.page > 0:
+            self.page -= 1
+            self.update_components()
+            embed = await self.build_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.defer()
+
+    async def next_page_callback(self, interaction: discord.Interaction):
+        if self.page < self.max_pages - 1:
+            self.page += 1
+            self.update_components()
+            embed = await self.build_embed()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.defer()
+
+    async def clear_role_callback(self, interaction: discord.Interaction):
+        class ClearRoleModal(discord.ui.Modal, title="🗑️ Gỡ Bỏ Role Thưởng Của Level"):
+            level_input = discord.ui.TextInput(
+                label="Nhập số Level muốn gỡ role",
+                style=discord.TextStyle.short,
+                placeholder="Ví dụ: 5, 10, 50",
+                required=True,
+                max_length=5
+            )
+
+            async def on_submit(self, modal_interaction: discord.Interaction):
+                try:
+                    lvl_to_clear = int(self.level_input.value.strip())
+                except ValueError:
+                    await modal_interaction.response.send_message("❌ Vui lòng nhập một con số hợp lệ!", ephemeral=True)
+                    return
+
+                db_cursor.execute("DELETE FROM level_roles WHERE guild_id = ? AND level = ?", (modal_interaction.guild.id, lvl_to_clear))
+                db_conn.commit()
+
+                embed, view = await LevelManagementDashboard.create_dashboard(modal_interaction.guild, page=0)
+                await interaction.edit_original_response(embed=embed, view=view)
+                await modal_interaction.response.send_message(f"✅ Đã gỡ bỏ thành công phần thưởng của **Level {lvl_to_clear}**!", ephemeral=True)
+
+        await interaction.response.send_modal(ClearRoleModal())
+
+
+@bot.tree.command(name="configlevelrole", description="Mở bảng điều khiển trực quan để gắn ID role cho từng level (Admin)")
 @discord.app_commands.checks.has_permissions(administrator=True)
 async def configlevelrole(interaction: discord.Interaction):
-    await interaction.response.send_modal(LevelRoleMultiModal())
+    embed, view = await LevelManagementDashboard.create_dashboard(interaction.guild, page=0)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 @configlevelrole.error
 async def configlevelrole_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
@@ -304,12 +409,12 @@ async def configlevelrole_error(interaction: discord.Interaction, error: discord
 
 
 # =========================================================================
-# PHẦN 2: CÁC LỆNH SETWELCOME, SETBOOST, THÔNG BÁO, BIRTHDAY, QUẢN LÝ
+# PHẦN 2: CÁC LỆNH SETWELCOME, SETBOOST, SETLEVELUP, SETBOOSTROLE, THÔNG BÁO
 # =========================================================================
 
-@bot.tree.command(name="setwelcome", description="Cài đặt tin nhắn welcome và file GIF trực tiếp bằng cách tải file từ máy")
+@bot.tree.command(name="setwelcome", description="Cài đặt nội dung tin nhắn welcome và file GIF trực tiếp từ máy (Admin)")
 @discord.app_commands.describe(
-    message="Nội dung tin nhắn chào mừng (Dùng {name}, {number}, {member})",
+    message="Nội dung tin nhắn chào mừng (Dùng {name}, {number}, {member}, {server})",
     channel="Kênh hiển thị thông báo welcome",
     gif_file="Tải file ảnh động GIF từ máy của bạn"
 )
@@ -324,9 +429,11 @@ async def setwelcome(
     WELCOME_CONFIG["message"] = message
 
     if gif_file:
-        if gif_file.filename.lower().endswith('.gif'):
-            await gif_file.save("welcome_gif.gif")
-            WELCOME_CONFIG["gif_path"] = "welcome_gif.gif"
+        if not gif_file.filename.lower().endswith('.gif'):
+            await interaction.response.send_message("❌ Vui lòng tải lên một tệp có định dạng **.gif** hợp lệ!", ephemeral=True)
+            return
+        await gif_file.save("welcome_gif.gif")
+        WELCOME_CONFIG["gif_path"] = "welcome_gif.gif"
 
     embed = discord.Embed(
         title="✨ Thiết lập Welcome thành công",
@@ -347,7 +454,7 @@ async def setwelcome_error(interaction: discord.Interaction, error: discord.app_
         await interaction.response.send_message(f"❌ Lỗi: {error}", ephemeral=True)
 
 
-@bot.tree.command(name="setboost", description="Cài đặt kênh thông báo Boost dạng Embed và tải file GIF cảm ơn từ máy (Admin)")
+@bot.tree.command(name="setboost", description="Cài đặt nội dung tin nhắn và file GIF cảm ơn Boost trực tiếp từ máy (Admin)")
 @discord.app_commands.describe(
     channel="Kênh để bot gửi thông báo khi có người Boost",
     message="Nội dung tin nhắn cảm ơn (Dùng {member}, {server})",
@@ -357,23 +464,25 @@ async def setwelcome_error(interaction: discord.Interaction, error: discord.app_
 async def setboost(
     interaction: discord.Interaction, 
     channel: discord.TextChannel, 
-    message: str = None,
+    message: str,
     gif_file: discord.Attachment = None
 ):
     server_boost_channels[interaction.guild.id] = channel.id
-    if message:
-        BOOST_CONFIG["message"] = message
+    BOOST_CONFIG["message"] = message
+        
     if gif_file:
-        if gif_file.filename.lower().endswith('.gif'):
-            await gif_file.save("boost_gif.gif")
-            BOOST_CONFIG["gif_path"] = "boost_gif.gif"
+        if not gif_file.filename.lower().endswith('.gif'):
+            await interaction.response.send_message("❌ Vui lòng tải lên một tệp có định dạng **.gif** hợp lệ!", ephemeral=True)
+            return
+        await gif_file.save("boost_gif.gif")
+        BOOST_CONFIG["gif_path"] = "boost_gif.gif"
 
     embed = discord.Embed(
         title="✨ Thiết lập thông báo Boost thành công",
         description=f"Đã cấu hình kênh thông báo Boost tại {channel.mention}!",
         color=discord.Color.from_rgb(255, 115, 250)
     )
-    embed.add_field(name="💬 Mẫu tin nhắn cảm ơn", value=BOOST_CONFIG["message"], inline=False)
+    embed.add_field(name="💬 Mẫu tin nhắn cảm ơn", value=message, inline=False)
     if gif_file:
         embed.add_field(name="🎞️ GIF Boost mới", value=gif_file.filename, inline=True)
     embed.set_footer(text=f"Cập nhật bởi {interaction.user.display_name} | {FOOTER_AUTHOR}", icon_url=interaction.user.display_avatar.url)
@@ -381,6 +490,64 @@ async def setboost(
 
 @setboost.error
 async def setboost_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+    if isinstance(error, discord.app_commands.MissingPermissions):
+        await interaction.response.send_message("⛔ Bạn cần quyền **Quản trị viên (Administrator)** để sử dụng lệnh này.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"❌ Lỗi: {error}", ephemeral=True)
+
+
+@bot.tree.command(name="setlevelup", description="Cài đặt file GIF chúc mừng khi thành viên lên cấp bằng cách tải file từ máy (Admin)")
+@discord.app_commands.describe(gif_file="Tải file ảnh động GIF chúc mừng lên cấp từ máy của bạn")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setlevelup(interaction: discord.Interaction, gif_file: discord.Attachment):
+    if not gif_file.filename.lower().endswith('.gif'):
+        await interaction.response.send_message("❌ Vui lòng tải lên một tệp có định dạng **.gif** hợp lệ!", ephemeral=True)
+        return
+
+    await gif_file.save("levelup_gif.gif")
+    LEVELUP_CONFIG["gif_path"] = "levelup_gif.gif"
+
+    embed = discord.Embed(
+        title="✨ Cập nhật GIF Lên Cấp Thành Công",
+        description=f"Đã cập nhật file ảnh động chúc mừng lên cấp thành công (`{gif_file.filename}`)!",
+        color=discord.Color.gold()
+    )
+    embed.set_footer(text=f"Cập nhật bởi {interaction.user.display_name} | {FOOTER_AUTHOR}")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@setlevelup.error
+async def setlevelup_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+    if isinstance(error, discord.app_commands.MissingPermissions):
+        await interaction.response.send_message("⛔ Bạn cần quyền **Quản trị viên (Administrator)** để sử dụng lệnh này.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"❌ Lỗi: {error}", ephemeral=True)
+
+
+@bot.tree.command(name="setboostrole", description="Cài đặt role tự động tặng cho người Boost server (Admin)")
+@discord.app_commands.describe(role="Role bạn muốn tự động tặng khi có người Boost")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setboostrole(interaction: discord.Interaction, role: discord.Role):
+    if role >= interaction.guild.me.top_role:
+        await interaction.response.send_message("❌ Bot không thể quản lý role này vì vị trí của nó cao hơn hoặc bằng role cao nhất của bot!", ephemeral=True)
+        return
+
+    db_cursor.execute("""
+        INSERT INTO server_boost_roles (guild_id, role_id) 
+        VALUES (?, ?) 
+        ON CONFLICT(guild_id) DO UPDATE SET role_id = ?
+    """, (interaction.guild.id, role.id, role.id))
+    db_conn.commit()
+
+    embed = discord.Embed(
+        title="✨ Thiết lập Role Boost thành công",
+        description=f"Từ nay thành viên Boost server sẽ nhận được tự động role {role.mention}!",
+        color=discord.Color.from_rgb(255, 115, 250)
+    )
+    embed.set_footer(text=f"Thực hiện bởi {interaction.user.display_name} | {FOOTER_AUTHOR}")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@setboostrole.error
+async def setboostrole_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
     if isinstance(error, discord.app_commands.MissingPermissions):
         await interaction.response.send_message("⛔ Bạn cần quyền **Quản trị viên (Administrator)** để sử dụng lệnh này.", ephemeral=True)
     else:
@@ -594,42 +761,7 @@ async def before_update_stats_loop():
 
 
 # =========================================================================
-# PHẦN 5.1: TÍNH NĂNG TREO CALL (VOICE AFK / JOIN VC)
-# =========================================================================
-
-@bot.tree.command(name="joinvc", description="Lệnh bắt bot vào phòng thoại (call) mà bạn đang đứng để treo")
-async def joinvc(interaction: discord.Interaction):
-    if not interaction.user.voice or not interaction.user.voice.channel:
-        await interaction.response.send_message("❌ Bạn cần vào một phòng thoại (voice channel) trước khi dùng lệnh này!", ephemeral=True)
-        return
-
-    voice_channel = interaction.user.voice.channel
-    
-    # Kiểm tra xem bot đã ở trong phòng thoại nào của server này chưa
-    if interaction.guild.voice_client:
-        try:
-            await interaction.guild.voice_client.move_to(voice_channel)
-            await interaction.response.send_message(f"🎧 Đã di chuyển bot sang phòng thoại: **{voice_channel.name}**!", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Không thể di chuyển phòng thoại: {e}", ephemeral=True)
-    else:
-        try:
-            await voice_channel.connect(self_deaf=True) # Tự động bật tắt âm (deafen) cho bot đỡ ồn
-            await interaction.response.send_message(f"🎧 Bot đã vào phòng thoại **{voice_channel.name}** để treo call thành công!", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Không thể kết nối vào phòng thoại: {e}", ephemeral=True)
-
-@bot.tree.command(name="leavevc", description="Đuổi bot ra khỏi phòng thoại")
-async def leavevc(interaction: discord.Interaction):
-    if interaction.guild.voice_client:
-        await interaction.guild.voice_client.disconnect()
-        await interaction.response.send_message("👋 Đã cho bot rời khỏi phòng thoại!", ephemeral=True)
-    else:
-        await interaction.response.send_message("❌ Bot hiện không ở trong phòng thoại nào cả!", ephemeral=True)
-
-
-# =========================================================================
-# PHẦN 6: SỰ KIỆN CHAT, TÍCH LUỸ XP & TỰ ĐỘNG TRAO ROLE (MAX LEVEL 300)
+# PHẦN 6: SỰ KIỆN CHAT, TÍCH LUỸ XP & THÔNG BÁO + GỬI GIF CHÚC MỪNG LÊN CẤP
 # =========================================================================
 
 @bot.event
@@ -647,12 +779,15 @@ async def on_message(message):
         xp += added_xp
         
         leveled_up = False
+        new_levels_reached = [] 
+        
         while level < 300:
             xp_needed = (level + 1) * 100
             if xp >= xp_needed:
                 level += 1
                 xp -= xp_needed
                 leveled_up = True
+                new_levels_reached.append(level)
                 
                 if level >= 300:
                     level = 300
@@ -662,36 +797,47 @@ async def on_message(message):
 
         update_user_data(user_id, guild_id, xp, level)
 
-        # Lấy kênh thông báo level riêng (nếu đã cài bằng /setchanellvl)
         db_cursor.execute("SELECT channel_id FROM server_level_channels WHERE guild_id = ?", (guild_id,))
         chan_row = db_cursor.fetchone()
         target_channel = message.guild.get_channel(chan_row[0]) if chan_row and chan_row[0] else message.channel
 
         if leveled_up:
+            final_level = new_levels_reached[-1]
+            
             embed = discord.Embed(
-                title="🎉 CHÚC MỪNG LÊN CẤP! 🚀",
-                description=f"Chúc mừng {message.author.mention} đã đạt **Cấp độ {level}/300**! 🌟",
+                title="🎉 CHÚC MỪNG BẠN ĐÃ LÊN CẤP! 🚀",
+                description=(
+                    f"✨ Xin chúc mừng {message.author.mention} đã xuất sắc thăng hạng lên **Cấp độ {final_level}/300**! 🌟\n"
+                    f"Hãy tiếp tục tích cực tương tác và trò chuyện để mở thêm nhiều phần thưởng thú vị nhé!"
+                ),
                 color=discord.Color.gold()
             )
             embed.set_thumbnail(url=message.author.display_avatar.url)
-            embed.set_footer(text=FOOTER_AUTHOR)
-            try:
-                await target_channel.send(embed=embed)
-            except:
-                await message.channel.send(embed=embed)
+            embed.set_footer(text=f"Hệ thống Level | {FOOTER_AUTHOR}", icon_url=message.author.display_avatar.url)
 
-            db_cursor.execute("SELECT role_id FROM level_roles WHERE guild_id = ? AND level = ?", (guild_id, level))
-            role_row = db_cursor.fetchone()
-            if role_row:
-                role_id = role_row[0]
-                role = message.guild.get_role(role_id)
-                if role:
-                    try:
-                        await message.author.add_roles(role, reason=f"Đạt cấp độ {level} hệ thống tự động trao role.")
-                        reward_text = f"🎁 {message.author.mention} đã nhận được phần thưởng tự động: **{role.name}** do đạt cấp độ **{level}**! 🎉"
-                        await target_channel.send(reward_text)
-                    except Exception as e:
-                        print(f"⚠️ Không thể trao role cho user {message.author.name}: {e}")
+            try:
+                if os.path.exists(LEVELUP_CONFIG["gif_path"]):
+                    file = discord.File(LEVELUP_CONFIG["gif_path"], filename="levelup_gif.gif")
+                    embed.set_image(url="attachment://levelup_gif.gif")
+                    await target_channel.send(content=f"🥳 Chúc mừng {message.author.mention}!", embed=embed, file=file)
+                else:
+                    await target_channel.send(content=f"🥳 Chúc mừng {message.author.mention}!", embed=embed)
+            except Exception as e:
+                print(f"⚠️ Lỗi gửi tin nhắn chúc mừng lên cấp: {e}")
+
+            for lvl_reached in new_levels_reached:
+                db_cursor.execute("SELECT role_id FROM level_roles WHERE guild_id = ? AND level = ?", (guild_id, lvl_reached))
+                role_row = db_cursor.fetchone()
+                if role_row:
+                    role_id = role_row[0]
+                    role = message.guild.get_role(role_id)
+                    if role:
+                        try:
+                            await message.author.add_roles(role, reason=f"Đạt cấp độ {lvl_reached} - Hệ thống tự động trao role thưởng.")
+                            reward_text = f"🎁 {message.author.mention} đã nhận được phần thưởng tự động: **{role.name}** do đạt cột mốc **Level {lvl_reached}**! 🎉"
+                            await target_channel.send(reward_text)
+                        except Exception as e:
+                            print(f"⚠️ Không thể trao role cho user {message.author.name}: {e}")
 
     # --- XỬ LÝ PING, REACT & AFK ---
     if bot.user in message.mentions:
@@ -717,7 +863,7 @@ async def on_message(message):
 
 
 # =========================================================================
-# PHẦN 7: SỰ KIỆN WELCOME & BOOST
+# PHẦN 7: SỰ KIỆN WELCOME & BOOST (CẬP NHẬT TỰ ĐỘNG CẤP ROLE BOOST)
 # =========================================================================
 
 @bot.event
@@ -741,22 +887,33 @@ async def on_member_join(member):
 
 @bot.event
 async def on_member_update(before: discord.Member, after: discord.Member):
-    if after.guild.id not in server_boost_channels:
-        return
+    guild = after.guild
+    
     if before.premium_since is None and after.premium_since is not None:
-        channel = after.guild.get_channel(server_boost_channels[after.guild.id])
-        if not channel:
-            return
-        embed = discord.Embed(title="🚀 CẢM ƠN ĐÃ BOOST SERVER! 💎", description=f"Cảm ơn {after.mention} đã nâng cấp máy chủ **{after.guild.name}**!", color=discord.Color.from_rgb(255, 115, 250))
-        embed.set_thumbnail(url=after.display_avatar.url)
-        embed.set_footer(text=f"{after.guild.name} | {FOOTER_AUTHOR}")
-        
-        file = discord.File(BOOST_CONFIG["gif_path"], filename="boost_gif.gif") if os.path.exists(BOOST_CONFIG["gif_path"]) else None
-        if file:
-            embed.set_image(url="attachment://boost_gif.gif")
-            await channel.send(content=f"@everyone {BOOST_CONFIG['message'].format(member=after.mention, server=after.guild.name)}", embed=embed, file=file)
-        else:
-            await channel.send(content=f"@everyone {BOOST_CONFIG['message'].format(member=after.mention, server=after.guild.name)}", embed=embed)
+        db_cursor.execute("SELECT role_id FROM server_boost_roles WHERE guild_id = ?", (guild.id,))
+        role_row = db_cursor.fetchone()
+        if role_row:
+            role = guild.get_role(role_row[0])
+            if role:
+                try:
+                    await after.add_roles(role, reason="Tự động trao role thưởng Boost server.")
+                except Exception as e:
+                    print(f"⚠️ Không thể trao role boost cho {after.name}: {e}")
+
+        if guild.id in server_boost_channels:
+            channel = guild.get_channel(server_boost_channels[guild.id])
+            if channel:
+                embed = discord.Embed(title="🚀 CẢM ƠN ĐÃ BOOST SERVER! 💎", description=f"Cảm ơn {after.mention} đã nâng cấp máy chủ **{guild.name}**!", color=discord.Color.from_rgb(255, 115, 250))
+                embed.set_thumbnail(url=after.display_avatar.url)
+                embed.set_footer(text=f"{guild.name} | {FOOTER_AUTHOR}")
+                
+                custom_boost_msg = BOOST_CONFIG["message"].format(member=after.mention, server=guild.name)
+                file = discord.File(BOOST_CONFIG["gif_path"], filename="boost_gif.gif") if os.path.exists(BOOST_CONFIG["gif_path"]) else None
+                if file:
+                    embed.set_image(url="attachment://boost_gif.gif")
+                    await channel.send(content=f"@everyone {custom_boost_msg}", embed=embed, file=file)
+                else:
+                    await channel.send(content=f"@everyone {custom_boost_msg}", embed=embed)
 
 
 # =========================================================================
