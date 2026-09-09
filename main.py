@@ -582,6 +582,10 @@ async def on_message(message: discord.Message):
                     last_error = e
                     error_text = str(e)
 
+                    if "429" in error_text or "RESOURCE_EXHAUSTED" in error_text:
+                        reply_text = "💀 thôi t đi ngủ đây mai t sủa =))"
+                        break
+
                     if "503" in error_text or "UNAVAILABLE" in error_text:
                         await asyncio.sleep(2 ** attempt)
                         continue
