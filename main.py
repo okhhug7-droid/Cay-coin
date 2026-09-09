@@ -5,7 +5,7 @@ import datetime
 import sqlite3
 import math
 
-# Khởi tạo bot với đầy đủ Intents cần thiết
+# Khởi tạo bot với đầy đủ Intents cần thiết (bao gồm cả intents.presences và members để đếm online)
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -647,7 +647,7 @@ async def afk(ctx, *, reason="Đang bận"):
 
 
 # =========================================================================
-# PHẦN 5: SERVER STATS & KÊNH THỐNG KÊ TỰ ĐỘNG
+# PHẦN 5: SERVER STATS & KÊNH THỐNG KÊ TỰ ĐỘNG (Đã tích hợp Online & Boost)
 # =========================================================================
 
 @bot.tree.command(name="setupstats", description="Tự động tạo các kênh hiển thị thống kê thông tin của server (Admin)")
@@ -664,21 +664,27 @@ async def setupstats(interaction: discord.Interaction):
     total_members = guild.member_count
     bots_count = sum(m.bot for m in guild.members)
     humans_count = total_members - bots_count
+    online_count = sum(1 for m in guild.members if m.status != discord.Status.offline)
+    boost_count = guild.premium_subscription_count
 
     c_total = await guild.create_voice_channel(f"👥 Thành viên: {total_members}", category=category)
+    c_online = await guild.create_voice_channel(f"🟢 Trực tuyến: {online_count}", category=category)
     c_humans = await guild.create_voice_channel(f"👤 Người: {humans_count}", category=category)
     c_bots = await guild.create_voice_channel(f"🤖 Bots: {bots_count}", category=category)
+    c_boost = await guild.create_voice_channel(f"💎 Boost: {boost_count}", category=category)
 
     server_stats_channels[guild.id] = {
         "category_id": category.id,
         "total_id": c_total.id,
+        "online_id": c_online.id,
         "humans_id": c_humans.id,
-        "bots_id": c_bots.id
+        "bots_id": c_bots.id,
+        "boost_id": c_boost.id
     }
 
     embed = discord.Embed(
         title="✨ Thiết lập thống kê thành công",
-        description="Đã tạo danh mục và các kênh thống kê tự động cho server!",
+        description="Đã tạo danh mục và các kênh thống kê (Thành viên, Trực tuyến, Người, Bots, Boost) cho server!",
         color=discord.Color.green()
     )
     embed.set_footer(text=f"Thực hiện bởi {interaction.user.display_name} | {FOOTER_AUTHOR}")
@@ -698,20 +704,28 @@ async def update_stats_loop():
         if guild.id in server_stats_channels:
             data = server_stats_channels[guild.id]
             c_total = guild.get_channel(data["total_id"])
+            c_online = guild.get_channel(data["online_id"])
             c_humans = guild.get_channel(data["humans_id"])
             c_bots = guild.get_channel(data["bots_id"])
+            c_boost = guild.get_channel(data["boost_id"])
 
             total_members = guild.member_count
             bots_count = sum(m.bot for m in guild.members)
             humans_count = total_members - bots_count
+            online_count = sum(1 for m in guild.members if m.status != discord.Status.offline)
+            boost_count = guild.premium_subscription_count
 
             try:
                 if c_total:
                     await c_total.edit(name=f"👥 Thành viên: {total_members}")
+                if c_online:
+                    await c_online.edit(name=f"🟢 Trực tuyến: {online_count}")
                 if c_humans:
                     await c_humans.edit(name=f"👤 Người: {humans_count}")
                 if c_bots:
                     await c_bots.edit(name=f"🤖 Bots: {bots_count}")
+                if c_boost:
+                    await c_boost.edit(name=f"💎 Boost: {boost_count}")
             except Exception as e:
                 print(f"⚠️ Không thể cập nhật kênh thống kê cho server {guild.name}: {e}")
 
