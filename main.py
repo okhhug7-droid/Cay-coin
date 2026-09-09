@@ -4,6 +4,10 @@ import os
 import datetime
 import sqlite3
 import math
+from google import genai
+
+# --- CẤU HÌNH GEMINI AI ---
+ai_client = genai.Client()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -46,6 +50,13 @@ db_cursor.execute("""
     CREATE TABLE IF NOT EXISTS server_boost_roles (
         guild_id INTEGER PRIMARY KEY,
         role_id INTEGER
+    )
+""")
+
+db_cursor.execute("""
+    CREATE TABLE IF NOT EXISTS ai_channels (
+        guild_id INTEGER PRIMARY KEY,
+        channel_id INTEGER
     )
 """)
 db_conn.commit()
@@ -328,6 +339,18 @@ async def setboostrole(interaction: discord.Interaction, role: discord.Role):
     await interaction.response.send_message(f"✅ Đã thiết lập Role Boost: {role.mention}", ephemeral=True)
 
 
+@bot.tree.command(name="setaichannel", description="Cài đặt kênh để bot tự động chat bằng Gemini (Admin)")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setaichannel(interaction: discord.Interaction, channel: discord.TextChannel):
+    db_cursor.execute("""
+        INSERT INTO ai_channels (guild_id, channel_id) 
+        VALUES (?, ?) 
+        ON CONFLICT(guild_id) DO UPDATE SET channel_id = ?
+    """, (interaction.guild.id, channel.id, channel.id))
+    db_conn.commit()
+    await interaction.response.send_message(f"✅ Đã đặt kênh {channel.mention} làm kênh chat AI!", ephemeral=True)
+
+
 class BirthdayModal(discord.ui.Modal, title="🎂 Đăng ký Ngày Sinh Nhật"):
     dob_input = discord.ui.TextInput(label="Ngày sinh (DD/MM/YYYY)", placeholder="25/12/2004", required=True, max_length=15)
 
@@ -494,9 +517,36 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # --- PHẢN HỒI KHI BỊ PING ---
-    if bot.user.mentioned_in(message) and not message.mention_everyone:
-        await message.reply("Gì đấy bro? Gọi tui có chuyện gì không? 👀")
+    # --- TÍCH HỢP GEMINI CHAT AI (GỬI TEXT THUẦN KHÔNG DÙNG EMBED) ---
+    is_mentioned = bot.user.mentioned_in(message) and not message.mention_everyone
+    
+    is_ai_channel = False
+    if message.guild:
+        db_cursor.execute("SELECT channel_id FROM ai_channels WHERE guild_id = ?", (message.guild.id,))
+        ai_chan_row = db_cursor.fetchone()
+        if ai_chan_row and message.channel.id == ai_chan_row[0]:
+            is_ai_channel = True
+
+    if is_mentioned or is_ai_channel:
+        clean_content = message.content.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
+        if not clean_content:
+            clean_content = "Chào bạn!"
+
+        async with message.channel.typing():
+            try:
+                response = ai_client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=clean_content,
+                )
+                reply_text = response.text
+                
+                if len(reply_text) > 2000:
+                    reply_text = reply_text[:1997] + "..."
+                
+                # Gửi tin nhắn dạng text thuần trực tiếp (không qua discord.Embed)
+                await message.reply(reply_text)
+            except Exception as e:
+                await message.reply(f"⚠️ Đã có lỗi xảy ra khi gọi Gemini AI: `{e}`")
         return
 
     # --- HỆ THỐNG TÍNH XP & LEVEL ---
