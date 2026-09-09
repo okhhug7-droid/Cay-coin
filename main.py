@@ -84,6 +84,15 @@ db_cursor.execute("""
 """)
 db_conn.commit()
 
+# --- BẢNG KÊNH THÔNG BÁO ---
+db_cursor.execute("""
+    CREATE TABLE IF NOT EXISTS announcement_channels (
+        guild_id INTEGER PRIMARY KEY,
+        channel_id INTEGER
+    )
+""")
+db_conn.commit()
+
 afk_users = {}
 user_birthdays = {}         
 server_congrats_channels = {}  
@@ -388,6 +397,59 @@ class BirthdayView(discord.ui.View):
     @discord.ui.button(label="🎉 Nhập ngày sinh", style=discord.ButtonStyle.primary, custom_id="setup_birthday_btn")
     async def birthday_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BirthdayModal())
+
+@bot.tree.command(name="setannouncement", description="Thiết lập kênh thông báo (Admin)")
+@discord.app_commands.describe(channel="Kênh sẽ nhận thông báo")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setannouncement(interaction: discord.Interaction, channel: discord.TextChannel):
+    db_cursor.execute("""
+        INSERT INTO announcement_channels (guild_id, channel_id)
+        VALUES (?, ?)
+        ON CONFLICT(guild_id) DO UPDATE SET channel_id = ?
+    """, (interaction.guild.id, channel.id, channel.id))
+    db_conn.commit()
+    await interaction.response.send_message(
+        f"✅ Đã đặt {channel.mention} làm kênh thông báo!", ephemeral=True
+    )
+
+
+@bot.tree.command(name="thongbao", description="Gửi thông báo tới kênh đã cài đặt (Admin)")
+@discord.app_commands.describe(message="Nội dung thông báo")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def thongbao(interaction: discord.Interaction, message: str):
+    db_cursor.execute(
+        "SELECT channel_id FROM announcement_channels WHERE guild_id = ?",
+        (interaction.guild.id,)
+    )
+    row = db_cursor.fetchone()
+
+    if not row:
+        await interaction.response.send_message(
+            "❌ Chưa cài kênh thông báo. Dùng `/setannouncement` trước.", ephemeral=True
+        )
+        return
+
+    channel = interaction.guild.get_channel(row[0])
+    if not channel:
+        await interaction.response.send_message(
+            "❌ Không tìm thấy kênh thông báo. Hãy dùng `/setannouncement` để cài lại.", ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(title="📢 THÔNG BÁO", description=message,
+                          color=discord.Color.blurple())
+    embed.set_footer(text=FOOTER_AUTHOR)
+
+    try:
+        await channel.send(embed=embed)
+        await interaction.response.send_message(
+            f"✅ Đã gửi thông báo vào {channel.mention}!", ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ Bot không có quyền gửi tin nhắn vào kênh đó.", ephemeral=True
+        )
+
 
 @bot.tree.command(name="setbirthday", description="Thiết lập sinh nhật (Admin)")
 @discord.app_commands.checks.has_permissions(administrator=True)
