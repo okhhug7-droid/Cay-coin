@@ -58,7 +58,7 @@ db_conn.commit()
 
 # Lưu trữ dữ liệu tạm thời khác
 afk_users = {}
-user_birthdays = {}            
+user_birthdays = {}         
 server_congrats_channels = {}  
 server_boost_channels = {}     
 server_stats_channels = {}     
@@ -81,8 +81,9 @@ BOOST_CONFIG = {
     "gif_path": "boost_gif.gif"
 }
 
-# Cấu hình file GIF thông báo lên cấp mặc định
+# Cấu hình nội dung và file GIF thông báo lên cấp mặc định
 LEVELUP_CONFIG = {
+    "message": "Chúc mừng {member} đã đạt đến **Cấp độ {level} / 300**! 🌟{role_mention}",
     "gif_path": "levelup_gif.gif"
 }
 
@@ -123,87 +124,54 @@ def update_user_data(user_id, guild_id, xp, level):
     db_conn.commit()
 
 
-@bot.tree.command(name="level", description="Kiểm tra cấp độ và kinh nghiệm (XP) hiện tại của bạn hoặc người khác")
-@discord.app_commands.describe(member="Thành viên bạn muốn kiểm tra (để trống nếu xem của chính bạn)")
-async def level_cmd(interaction: discord.Interaction, member: discord.Member = None):
-    target = member or interaction.user
-    if target.bot:
-        await interaction.response.send_message("❌ Bot không có hệ thống cấp độ!", ephemeral=True)
-        return
+@bot.tree.command(name="setlevelconfig", description="Cài đặt kênh thông báo, nội dung và file GIF lên cấp (Admin)")
+@discord.app_commands.describe(
+    channel="Kênh văn bản dùng để gửi thông báo lên cấp",
+    message="Nội dung tin nhắn (Dùng {member}, {level}, {role_mention}, {server})",
+    gif_file="Tải file ảnh động GIF chúc mừng lên cấp từ máy của bạn"
+)
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setlevelconfig(
+    interaction: discord.Interaction, 
+    channel: discord.TextChannel = None,
+    message: str = None, 
+    gif_file: discord.Attachment = None
+):
+    if channel:
+        db_cursor.execute("""
+            INSERT INTO server_level_channels (guild_id, channel_id) 
+            VALUES (?, ?) 
+            ON CONFLICT(guild_id) DO UPDATE SET channel_id = ?
+        """, (interaction.guild.id, channel.id, channel.id))
+        db_conn.commit()
 
-    xp, level = get_user_data(target.id, interaction.guild.id)
-    
-    if level >= 300:
-        xp_value_str = "MAX (300)"
-    else:
-        xp_needed = (level + 1) * 100
-        xp_value_str = f"`{xp} / {xp_needed} XP`"
+    if message:
+        LEVELUP_CONFIG["message"] = message
 
-    embed = discord.Embed(
-        title=f"📊 Cấp Độ Của: {target.display_name}",
-        color=discord.Color.from_rgb(88, 101, 242)
-    )
-    embed.set_thumbnail(url=target.display_avatar.url)
-    embed.add_field(name="🌟 Cấp độ (Level)", value=f"`{level} / 300`", inline=True)
-    embed.add_field(name="✨ Kinh nghiệm (XP)", value=xp_value_str, inline=True)
-    embed.set_footer(text=FOOTER_AUTHOR)
-    
-    await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="leaderboard", description="Hiển thị bảng xếp hạng top 10 thành viên có level cao nhất server")
-async def leaderboard(interaction: discord.Interaction):
-    db_cursor.execute("SELECT user_id, xp, level FROM levels WHERE guild_id = ? ORDER BY level DESC, xp DESC LIMIT 10", (interaction.guild.id,))
-    top_users = db_cursor.fetchall()
-
-    if not top_users:
-        await interaction.response.send_message("❌ Chưa có dữ liệu bảng xếp hạng trong server này!", ephemeral=True)
-        return
+    if gif_file:
+        if not gif_file.filename.lower().endswith('.gif'):
+            await interaction.response.send_message("❌ Vui lòng tải lên một tệp có định dạng **.gif** hợp lệ!", ephemeral=True)
+            return
+        await gif_file.save("levelup_gif.gif")
+        LEVELUP_CONFIG["gif_path"] = "levelup_gif.gif"
 
     embed = discord.Embed(
-        title=f"🏆 BẢNG XẾP HẠNG LEVEL: {interaction.guild.name}",
-        description="Top 10 thành viên chăm chỉ chat nhất server (Max Level 300):",
+        title="✨ Cập Nhật Cấu Hình Lên Cấp Thành Công",
+        description="Đã lưu các thiết lập hệ thống thăng cấp cho server của bạn!",
         color=discord.Color.gold()
     )
-
-    medal_emojis = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
-    
-    desc_list = []
-    for index, (user_id, xp, level) in enumerate(top_users):
-        member = interaction.guild.get_member(user_id)
-        name = member.mention if member else f"Người dùng `{user_id}`"
-        medal = medal_emojis[index] if index < 10 else f"#{index+1}"
-        desc_list.append(f"{medal} {name} — Cấp: **{level}/300** (`{xp} XP`)")
-
-    embed.description = "\n".join(desc_list)
-    if interaction.guild.icon:
-        embed.set_thumbnail(url=interaction.guild.icon.url)
-    embed.set_footer(text=f"Yêu cầu bởi {interaction.user.display_name} | {FOOTER_AUTHOR}", icon_url=interaction.user.display_avatar.url)
-
-    await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="setchanellvl", description="Cài đặt kênh riêng để bot gửi thông báo lên cấp (Admin)")
-@discord.app_commands.describe(channel="Kênh văn bản bạn muốn dùng để thông báo lên cấp")
-@discord.app_commands.checks.has_permissions(administrator=True)
-async def setchanellvl(interaction: discord.Interaction, channel: discord.TextChannel):
-    db_cursor.execute("""
-        INSERT INTO server_level_channels (guild_id, channel_id) 
-        VALUES (?, ?) 
-        ON CONFLICT(guild_id) DO UPDATE SET channel_id = ?
-    """, (interaction.guild.id, channel.id, channel.id))
-    db_conn.commit()
-
-    embed = discord.Embed(
-        title="✨ Cài đặt kênh thông báo lên cấp thành công",
-        description=f"Từ nay các thông báo lên cấp và nhận role thưởng sẽ được gửi trực tiếp tại {channel.mention}!",
-        color=discord.Color.green()
-    )
+    if channel:
+        embed.add_field(name="📢 Kênh thông báo", value=channel.mention, inline=False)
+    if message:
+        embed.add_field(name="💬 Mẫu tin nhắn", value=message, inline=False)
+    if gif_file:
+        embed.add_field(name="🎞️ GIF mới", value=gif_file.filename, inline=True)
+        
     embed.set_footer(text=f"Thực hiện bởi {interaction.user.display_name} | {FOOTER_AUTHOR}")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@setchanellvl.error
-async def setchanellvl_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+@setlevelconfig.error
+async def setlevelconfig_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
     if isinstance(error, discord.app_commands.MissingPermissions):
         await interaction.response.send_message("⛔ Bạn cần quyền **Quản trị viên (Administrator)** để sử dụng lệnh này.", ephemeral=True)
     else:
@@ -274,7 +242,7 @@ class LevelManagementDashboard(discord.ui.View):
         super().__init__(timeout=180)
         self.guild = guild
         self.page = page
-        self.levels_per_page = 25  
+        self.levels_per_page = 25 
         self.max_pages = math.ceil(300 / self.levels_per_page)
         self.update_components()
 
@@ -409,7 +377,7 @@ async def configlevelrole_error(interaction: discord.Interaction, error: discord
 
 
 # =========================================================================
-# PHẦN 2: CÁC LỆNH SETWELCOME, SETBOOST, SETLEVELUP, SETBOOSTROLE, THÔNG BÁO
+# PHẦN 2: CÁC LỆNH SETWELCOME, SETBOOST, SETBOOSTROLE, THÔNG BÁO
 # =========================================================================
 
 @bot.tree.command(name="setwelcome", description="Cài đặt nội dung tin nhắn welcome và file GIF trực tiếp từ máy (Admin)")
@@ -490,33 +458,6 @@ async def setboost(
 
 @setboost.error
 async def setboost_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
-    if isinstance(error, discord.app_commands.MissingPermissions):
-        await interaction.response.send_message("⛔ Bạn cần quyền **Quản trị viên (Administrator)** để sử dụng lệnh này.", ephemeral=True)
-    else:
-        await interaction.response.send_message(f"❌ Lỗi: {error}", ephemeral=True)
-
-
-@bot.tree.command(name="setlevelup", description="Cài đặt file GIF chúc mừng khi thành viên lên cấp bằng cách tải file từ máy (Admin)")
-@discord.app_commands.describe(gif_file="Tải file ảnh động GIF chúc mừng lên cấp từ máy của bạn")
-@discord.app_commands.checks.has_permissions(administrator=True)
-async def setlevelup(interaction: discord.Interaction, gif_file: discord.Attachment):
-    if not gif_file.filename.lower().endswith('.gif'):
-        await interaction.response.send_message("❌ Vui lòng tải lên một tệp có định dạng **.gif** hợp lệ!", ephemeral=True)
-        return
-
-    await gif_file.save("levelup_gif.gif")
-    LEVELUP_CONFIG["gif_path"] = "levelup_gif.gif"
-
-    embed = discord.Embed(
-        title="✨ Cập nhật GIF Lên Cấp Thành Công",
-        description=f"Đã cập nhật file ảnh động chúc mừng lên cấp thành công (`{gif_file.filename}`)!",
-        color=discord.Color.gold()
-    )
-    embed.set_footer(text=f"Cập nhật bởi {interaction.user.display_name} | {FOOTER_AUTHOR}")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@setlevelup.error
-async def setlevelup_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
     if isinstance(error, discord.app_commands.MissingPermissions):
         await interaction.response.send_message("⛔ Bạn cần quyền **Quản trị viên (Administrator)** để sử dụng lệnh này.", ephemeral=True)
     else:
@@ -709,51 +650,70 @@ async def afk(ctx, *, reason="Đang bận"):
 # PHẦN 5: SERVER STATS & KÊNH THỐNG KÊ TỰ ĐỘNG
 # =========================================================================
 
-@bot.tree.command(name="setupstats", description="Tự động tạo kênh thống kê server (Admin)")
+@bot.tree.command(name="setupstats", description="Tự động tạo các kênh hiển thị thống kê thông tin của server (Admin)")
 @discord.app_commands.checks.has_permissions(administrator=True)
 async def setupstats(interaction: discord.Interaction):
     guild = interaction.guild
-    if not guild.me.guild_permissions.manage_channels:
-        await interaction.response.send_message("❌ Bot thiếu quyền quản lý kênh!", ephemeral=True)
-        return
-
     await interaction.response.defer(ephemeral=True)
-    category = await guild.create_category("📊 SERVER STATS 📊")
-    overwrites = {guild.default_role: discord.PermissionOverwrite(connect=False, view_channel=True)}
 
-    chan_member = await guild.create_voice_channel(f"👥 Thành viên: {guild.member_count}", category=category, overwrites=overwrites)
-    chan_online = await guild.create_voice_channel(f"🟢 Online: {sum(1 for m in guild.members if m.status != discord.Status.offline)}", category=category, overwrites=overwrites)
-    chan_bot = await guild.create_voice_channel(f"🤖 Bot: {sum(1 for m in guild.members if m.bot)}", category=category, overwrites=overwrites)
-    chan_boost = await guild.create_voice_channel(f"🚀 Boost: {guild.premium_subscription_count}", category=category, overwrites=overwrites)
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(connect=False, view_channel=True)
+    }
+    category = await guild.create_category("📊 THỐNG KÊ SERVER", overwrites=overwrites)
+
+    total_members = guild.member_count
+    bots_count = sum(m.bot for m in guild.members)
+    humans_count = total_members - bots_count
+
+    c_total = await guild.create_voice_channel(f"👥 Thành viên: {total_members}", category=category)
+    c_humans = await guild.create_voice_channel(f"👤 Người: {humans_count}", category=category)
+    c_bots = await guild.create_voice_channel(f"🤖 Bots: {bots_count}", category=category)
 
     server_stats_channels[guild.id] = {
-        "member_channel": chan_member.id,
-        "online_channel": chan_online.id,
-        "bot_channel": chan_bot.id,
-        "boost_channel": chan_boost.id
+        "category_id": category.id,
+        "total_id": c_total.id,
+        "humans_id": c_humans.id,
+        "bots_id": c_bots.id
     }
-    if not update_stats_loop.is_running():
-        update_stats_loop.start()
 
-    await interaction.followup.send("✨ Đã thiết lập thành công hệ thống kênh thống kê!", ephemeral=True)
+    embed = discord.Embed(
+        title="✨ Thiết lập thống kê thành công",
+        description="Đã tạo danh mục và các kênh thống kê tự động cho server!",
+        color=discord.Color.green()
+    )
+    embed.set_footer(text=f"Thực hiện bởi {interaction.user.display_name} | {FOOTER_AUTHOR}")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+@setupstats.error
+async def setupstats_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+    if isinstance(error, discord.app_commands.MissingPermissions):
+        await interaction.response.send_message("⛔ Bạn cần quyền **Quản trị viên (Administrator)** để sử dụng lệnh này.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"❌ Lỗi: {error}", ephemeral=True)
+
 
 @tasks.loop(minutes=10)
 async def update_stats_loop():
-    for guild_id, channels in server_stats_channels.items():
-        guild = bot.get_guild(guild_id)
-        if not guild:
-            continue
-        try:
-            if "member_channel" in channels:
-                await guild.get_channel(channels["member_channel"]).edit(name=f"👥 Thành viên: {guild.member_count}")
-            if "online_channel" in channels:
-                await guild.get_channel(channels["online_channel"]).edit(name=f"🟢 Online: {sum(1 for m in guild.members if m.status != discord.Status.offline)}")
-            if "bot_channel" in channels:
-                await guild.get_channel(channels["bot_channel"]).edit(name=f"🤖 Bot: {sum(1 for m in guild.members if m.bot)}")
-            if "boost_channel" in channels:
-                await guild.get_channel(channels["boost_channel"]).edit(name=f"🚀 Boost: {guild.premium_subscription_count}")
-        except:
-            pass
+    for guild in bot.guilds:
+        if guild.id in server_stats_channels:
+            data = server_stats_channels[guild.id]
+            c_total = guild.get_channel(data["total_id"])
+            c_humans = guild.get_channel(data["humans_id"])
+            c_bots = guild.get_channel(data["bots_id"])
+
+            total_members = guild.member_count
+            bots_count = sum(m.bot for m in guild.members)
+            humans_count = total_members - bots_count
+
+            try:
+                if c_total:
+                    await c_total.edit(name=f"👥 Thành viên: {total_members}")
+                if c_humans:
+                    await c_humans.edit(name=f"👤 Người: {humans_count}")
+                if c_bots:
+                    await c_bots.edit(name=f"🤖 Bots: {bots_count}")
+            except Exception as e:
+                print(f"⚠️ Không thể cập nhật kênh thống kê cho server {guild.name}: {e}")
 
 @update_stats_loop.before_loop
 async def before_update_stats_loop():
@@ -761,167 +721,155 @@ async def before_update_stats_loop():
 
 
 # =========================================================================
-# PHẦN 6: SỰ KIỆN CHAT, TÍCH LUỸ XP & THÔNG BÁO + GỬI GIF CHÚC MỪNG LÊN CẤP
+# PHẦN 6: SỰ KIỆN WELCOME, BOOST, CHAT XP & LEVEL UP
 # =========================================================================
 
 @bot.event
-async def on_message(message):
+async def on_member_join(member: discord.Member):
+    if WELCOME_CONFIG["channel_id"]:
+        channel = member.guild.get_channel(WELCOME_CONFIG["channel_id"])
+        if channel:
+            member_number = member.guild.member_count
+            msg = WELCOME_CONFIG["message"].format(
+                member=member.mention,
+                name=member.display_name,
+                number=member_number,
+                server=member.guild.name
+            )
+            
+            if os.path.exists(WELCOME_CONFIG["gif_path"]):
+                file = discord.File(WELCOME_CONFIG["gif_path"], filename="welcome_gif.gif")
+                embed = discord.Embed(description=msg, color=discord.Color.from_rgb(88, 101, 242))
+                embed.set_image(url="attachment://welcome_gif.gif")
+                embed.set_footer(text=FOOTER_AUTHOR)
+                await channel.send(embed=embed, file=file)
+            else:
+                embed = discord.Embed(description=msg, color=discord.Color.from_rgb(88, 101, 242))
+                embed.set_footer(text=FOOTER_AUTHOR)
+                await channel.send(embed=embed)
+
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    if before.premium_since is None and after.premium_since is not None:
+        guild_id = after.guild.id
+        
+        db_cursor.execute("SELECT role_id FROM server_boost_roles WHERE guild_id = ?", (guild_id,))
+        role_data = db_cursor.fetchone()
+        if role_data:
+            role = after.guild.get_role(role_data[0])
+            if role:
+                try:
+                    await after.add_roles(role, reason="Tự động tặng role khi Boost Server")
+                except Exception as e:
+                    print(f"Không thể trao role boost: {e}")
+
+        channel_id = server_boost_channels.get(guild_id)
+        if channel_id:
+            channel = after.guild.get_channel(channel_id)
+            if channel:
+                msg = BOOST_CONFIG["message"].format(
+                    member=after.mention,
+                    server=after.guild.name
+                )
+                if os.path.exists(BOOST_CONFIG["gif_path"]):
+                    file = discord.File(BOOST_CONFIG["gif_path"], filename="boost_gif.gif")
+                    embed = discord.Embed(description=msg, color=discord.Color.from_rgb(255, 115, 250))
+                    embed.set_image(url="attachment://boost_gif.gif")
+                    embed.set_footer(text=FOOTER_AUTHOR)
+                    await channel.send(embed=embed, file=file)
+                else:
+                    embed = discord.Embed(description=msg, color=discord.Color.from_rgb(255, 115, 250))
+                    embed.set_footer(text=FOOTER_AUTHOR)
+                    await channel.send(embed=embed)
+
+
+@bot.event
+async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # --- HỆ THỐNG XP KHI CHAT (CỐ ĐỊNH 25 XP & LEVEL MAX 300) ---
-    user_id = message.author.id
-    guild_id = message.guild.id
-    xp, level = get_user_data(user_id, guild_id)
-    
-    if level < 300:
-        added_xp = 25  
-        xp += added_xp
-        
-        leveled_up = False
-        new_levels_reached = [] 
-        
-        while level < 300:
-            xp_needed = (level + 1) * 100
-            if xp >= xp_needed:
-                level += 1
-                xp -= xp_needed
-                leveled_up = True
-                new_levels_reached.append(level)
-                
-                if level >= 300:
-                    level = 300
-                    xp = 0
-            else:
-                break
-
-        update_user_data(user_id, guild_id, xp, level)
-
-        db_cursor.execute("SELECT channel_id FROM server_level_channels WHERE guild_id = ?", (guild_id,))
-        chan_row = db_cursor.fetchone()
-        target_channel = message.guild.get_channel(chan_row[0]) if chan_row and chan_row[0] else message.channel
-
-        if leveled_up:
-            final_level = new_levels_reached[-1]
-            
-            embed = discord.Embed(
-                title="🎉 CHÚC MỪNG BẠN ĐÃ LÊN CẤP! 🚀",
-                description=(
-                    f"✨ Xin chúc mừng {message.author.mention} đã xuất sắc thăng hạng lên **Cấp độ {final_level}/300**! 🌟\n"
-                    f"Hãy tiếp tục tích cực tương tác và trò chuyện để mở thêm nhiều phần thưởng thú vị nhé!"
-                ),
-                color=discord.Color.gold()
-            )
-            embed.set_thumbnail(url=message.author.display_avatar.url)
-            embed.set_footer(text=f"Hệ thống Level | {FOOTER_AUTHOR}", icon_url=message.author.display_avatar.url)
-
-            try:
-                if os.path.exists(LEVELUP_CONFIG["gif_path"]):
-                    file = discord.File(LEVELUP_CONFIG["gif_path"], filename="levelup_gif.gif")
-                    embed.set_image(url="attachment://levelup_gif.gif")
-                    await target_channel.send(content=f"🥳 Chúc mừng {message.author.mention}!", embed=embed, file=file)
-                else:
-                    await target_channel.send(content=f"🥳 Chúc mừng {message.author.mention}!", embed=embed)
-            except Exception as e:
-                print(f"⚠️ Lỗi gửi tin nhắn chúc mừng lên cấp: {e}")
-
-            for lvl_reached in new_levels_reached:
-                db_cursor.execute("SELECT role_id FROM level_roles WHERE guild_id = ? AND level = ?", (guild_id, lvl_reached))
-                role_row = db_cursor.fetchone()
-                if role_row:
-                    role_id = role_row[0]
-                    role = message.guild.get_role(role_id)
-                    if role:
-                        try:
-                            await message.author.add_roles(role, reason=f"Đạt cấp độ {lvl_reached} - Hệ thống tự động trao role thưởng.")
-                            reward_text = f"🎁 {message.author.mention} đã nhận được phần thưởng tự động: **{role.name}** do đạt cột mốc **Level {lvl_reached}**! 🎉"
-                            await target_channel.send(reward_text)
-                        except Exception as e:
-                            print(f"⚠️ Không thể trao role cho user {message.author.name}: {e}")
-
-    # --- XỬ LÝ PING, REACT & AFK ---
-    if bot.user in message.mentions:
-        try:
-            await message.add_reaction(discord.PartialEmoji(name="emoji_39", id=1538913815083622550))
-        except:
-            pass
+    if message.mentions:
+        for user in message.mentions:
+            if user.id in afk_users:
+                reason = afk_users[user.id]
+                await message.channel.send(f"💤 **{user.display_name}** hiện đang AFK: {reason}")
 
     if message.author.id in afk_users:
         del afk_users[message.author.id]
         try:
-            if message.author.display_name.startswith("[AFK] "):
-                await message.author.edit(nick=message.author.display_name[6:])
+            clean_name = message.author.display_name.replace("[AFK] ", "")
+            await message.author.edit(nick=clean_name)
         except:
             pass
-        await message.channel.send(embed=discord.Embed(description=f"👋 Chào mừng {message.author.mention} đã quay lại! Đã tắt AFK.", color=discord.Color.green()))
+        await message.channel.send(f"👋 Chào mừng {message.author.mention} đã quay trở lại, tôi đã tắt chế độ AFK cho bạn!", delete_after=5)
 
-    for mention in message.mentions:
-        if mention.id in afk_users:
-            await message.channel.send(embed=discord.Embed(description=f"💤 {mention.mention} đang AFK: **{afk_users[mention.id]}**", color=discord.Color.orange()))
+    # --- HỆ THỐNG TÍNH XP KHI NHẮN TIN ---
+    user_id = message.author.id
+    guild_id = message.guild.id
+    xp, level = get_user_data(user_id, guild_id)
+
+    if level < 300:
+        xp += 15
+        xp_needed = (level + 1) * 100
+
+        if xp >= xp_needed:
+            level += 1
+            xp = 0
+            update_user_data(user_id, guild_id, xp, level)
+
+            db_cursor.execute("SELECT role_id FROM level_roles WHERE guild_id = ? AND level = ?", (guild_id, level))
+            role_row = db_cursor.fetchone()
+            role_mention_str = ""
+            if role_row:
+                role = message.guild.get_role(role_row[0])
+                if role:
+                    try:
+                        await message.author.add_roles(role, reason=f"Thưởng đạt cấp độ {level}")
+                        role_mention_str = f"\n🎁 Nhận được phần thưởng Role: {role.mention}"
+                    except Exception as e:
+                        print(f"Lỗi trao role thưởng level: {e}")
+
+            db_cursor.execute("SELECT channel_id FROM server_level_channels WHERE guild_id = ?", (guild_id,))
+            lvl_chan_row = db_cursor.fetchone()
+            target_chan = message.guild.get_channel(lvl_chan_row[0]) if lvl_chan_row else message.channel
+
+            if target_chan:
+                msg = LEVELUP_CONFIG["message"].format(
+                    member=message.author.mention,
+                    level=level,
+                    role_mention=role_mention_str,
+                    server=message.guild.name
+                )
+
+                embed = discord.Embed(
+                    description=msg,
+                    color=discord.Color.gold()
+                )
+                embed.set_footer(text=FOOTER_AUTHOR)
+
+                if os.path.exists(LEVELUP_CONFIG["gif_path"]):
+                    file = discord.File(LEVELUP_CONFIG["gif_path"], filename="levelup_gif.gif")
+                    embed.set_image(url="attachment://levelup_gif.gif")
+                    try:
+                        await target_chan.send(embed=embed, file=file)
+                    except:
+                        await target_chan.send(embed=embed)
+                else:
+                    await target_chan.send(embed=embed)
+        else:
+            update_user_data(user_id, guild_id, xp, level)
 
     await bot.process_commands(message)
 
 
 # =========================================================================
-# PHẦN 7: SỰ KIỆN WELCOME & BOOST (CẬP NHẬT TỰ ĐỘNG CẤP ROLE BOOST)
+# KHỞI CHẠY BOT (AN TOÀN CHO RAILWAY)
 # =========================================================================
+BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 
-@bot.event
-async def on_member_join(member):
-    channel = member.guild.get_channel(WELCOME_CONFIG["channel_id"]) if WELCOME_CONFIG["channel_id"] else None
-    if not channel:
-        for c in member.guild.text_channels:
-            if c.name in ["welcome", "chao-mung", "general", "chung"]:
-                channel = c
-                break
-        if not channel and member.guild.text_channels:
-            channel = member.guild.text_channels[0]
-    if not channel:
-        return
-
-    custom_message = WELCOME_CONFIG["message"].format(name=member.name, number=member.guild.member_count, member=member.mention, server=member.guild.name)
-    if os.path.exists(WELCOME_CONFIG["gif_path"]):
-        await channel.send(content=custom_message, file=discord.File(WELCOME_CONFIG["gif_path"], filename="welcome_gif.gif"))
+if __name__ == "__main__":
+    if not BOT_TOKEN:
+        print("❌ LỖI: Chưa cấu hình biến môi trường DISCORD_TOKEN trên Railway!")
     else:
-        await channel.send(content=custom_message)
-
-@bot.event
-async def on_member_update(before: discord.Member, after: discord.Member):
-    guild = after.guild
-    
-    if before.premium_since is None and after.premium_since is not None:
-        db_cursor.execute("SELECT role_id FROM server_boost_roles WHERE guild_id = ?", (guild.id,))
-        role_row = db_cursor.fetchone()
-        if role_row:
-            role = guild.get_role(role_row[0])
-            if role:
-                try:
-                    await after.add_roles(role, reason="Tự động trao role thưởng Boost server.")
-                except Exception as e:
-                    print(f"⚠️ Không thể trao role boost cho {after.name}: {e}")
-
-        if guild.id in server_boost_channels:
-            channel = guild.get_channel(server_boost_channels[guild.id])
-            if channel:
-                embed = discord.Embed(title="🚀 CẢM ƠN ĐÃ BOOST SERVER! 💎", description=f"Cảm ơn {after.mention} đã nâng cấp máy chủ **{guild.name}**!", color=discord.Color.from_rgb(255, 115, 250))
-                embed.set_thumbnail(url=after.display_avatar.url)
-                embed.set_footer(text=f"{guild.name} | {FOOTER_AUTHOR}")
-                
-                custom_boost_msg = BOOST_CONFIG["message"].format(member=after.mention, server=guild.name)
-                file = discord.File(BOOST_CONFIG["gif_path"], filename="boost_gif.gif") if os.path.exists(BOOST_CONFIG["gif_path"]) else None
-                if file:
-                    embed.set_image(url="attachment://boost_gif.gif")
-                    await channel.send(content=f"@everyone {custom_boost_msg}", embed=embed, file=file)
-                else:
-                    await channel.send(content=f"@everyone {custom_boost_msg}", embed=embed)
-
-
-# =========================================================================
-# PHẦN 8: KHỞI ĐỘNG BOT
-# =========================================================================
-
-TOKEN = os.getenv("BOT_TOKEN")
-if TOKEN:
-    bot.run(TOKEN)
-else:
-    print("❌ Lỗi: Không tìm thấy biến môi trường BOT_TOKEN!")
+        bot.run(BOT_TOKEN)
