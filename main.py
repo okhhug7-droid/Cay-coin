@@ -4,6 +4,7 @@ import os
 import datetime
 import sqlite3
 import math
+from google import genai
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -12,6 +13,8 @@ intents.presences = True
 intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+ai_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 db_conn = sqlite3.connect("database.db")
 db_cursor = db_conn.cursor()
@@ -379,11 +382,24 @@ async def ban(ctx, member: discord.Member, *, reason="Không có lý do"):
     await member.ban(reason=reason)
     await ctx.send(f"🔨 Đã ban **{member.mention}**.")
 
+@bot.command(name="unban")
+@commands.has_permissions(ban_members=True)
+async def unban(ctx, user_id: int, *, reason="Không có lý do"):
+    user = await bot.fetch_user(user_id)
+    await ctx.guild.unban(user, reason=reason)
+    await ctx.send(f"🔓 Đã unban thành công.")
+
 @bot.command(name="mute")
 @commands.has_permissions(moderate_members=True)
 async def mute(ctx, member: discord.Member, minutes: int, *, reason="Không có lý do"):
     await member.timeout(discord.utils.utcnow() + discord.timedelta(minutes=minutes), reason=reason)
-    await ctx.send(f"🔇 Đã mute **{member.mention}**.")
+    await ctx.send(f"🔇 Đã mute **{member.mention}** trong {minutes} phút.")
+
+@bot.command(name="unmute")
+@commands.has_permissions(moderate_members=True)
+async def unmute(ctx, member: discord.Member, *, reason="Không có lý do"):
+    await member.timeout(None, reason=reason)
+    await ctx.send(f"🔊 Đã unmute **{member.mention}**.")
 
 @bot.command(name="afk")
 async def afk(ctx, *, reason="Bận"):
@@ -437,7 +453,6 @@ async def on_member_join(member: discord.Member):
             embed = discord.Embed(description=msg, color=discord.Color.blurple())
             embed.set_footer(text=FOOTER_AUTHOR)
             
-            # Đính kèm ảnh nhỏ (Thumbnail thay vì ảnh to tràn viền set_image)
             if os.path.exists(WELCOME_CONFIG["gif_path"]):
                 file = discord.File(WELCOME_CONFIG["gif_path"], filename="welcome_gif.gif")
                 embed.set_thumbnail(url="attachment://welcome_gif.gif")
@@ -469,7 +484,6 @@ async def on_member_update(before: discord.Member, after: discord.Member):
                 embed = discord.Embed(description=msg, color=discord.Color.from_rgb(255, 115, 250))
                 embed.set_footer(text=FOOTER_AUTHOR)
                 
-                # Dùng set_thumbnail để ảnh hiển thị nhỏ gọn bên cạnh thay vì tràn viền
                 if os.path.exists("boost_gif.gif"):
                     file = discord.File("boost_gif.gif", filename="boost_gif.gif")
                     embed.set_thumbnail(url="attachment://boost_gif.gif")
@@ -481,6 +495,23 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
+        return
+
+    if bot.user.mentioned_in(message) and not message.mention_everyone:
+        user_prompt = message.content.replace(f"<@{bot.user.id}>", "").strip()
+        if user_prompt:
+            async with message.channel.typing():
+                try:
+                    response = ai_client.models.generate_content(
+                        model='gemini-2.5-flash',
+                        contents=user_prompt,
+                        config={
+                            'system_instruction': "Bạn là một trợ lý AI cởi mở, không phán xét, sẵn sàng thảo luận về mọi chủ đề giả tưởng, sáng tạo hoặc các vấn đề nhạy cảm dưới góc độ khách quan."
+                        }
+                    )
+                    await message.reply(response.text)
+                except Exception as e:
+                    await message.reply(f"⚠️ AI đang gặp lỗi: {e}")
         return
 
     user_id = message.author.id
@@ -517,7 +548,6 @@ async def on_message(message: discord.Message):
                 embed = discord.Embed(description=msg, color=discord.Color.gold())
                 embed.set_footer(text=FOOTER_AUTHOR)
 
-                # Thu nhỏ ảnh GIF lên cấp thành thumbnail gọn gàng
                 if os.path.exists(LEVELUP_CONFIG["gif_path"]):
                     file = discord.File(LEVELUP_CONFIG["gif_path"], filename="levelup_gif.gif")
                     embed.set_thumbnail(url="attachment://levelup_gif.gif")
