@@ -870,6 +870,6 @@ BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 
 if __name__ == "__main__":
     if not BOT_TOKEN:
-        print("❌ LỖI: Chưa cấu hình biến môi trường DISCORD_TOKEN trên Railway!")
+        print("❌ LỖI: Chưa cấu hình biến môi trường BOT_TOKEN trên Railway!")
     else:
         bot.run(BOT_TOKEN)
