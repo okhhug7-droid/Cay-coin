@@ -1252,31 +1252,184 @@ async def on_message(message: discord.Message):
 
 
 class QRBankModal(discord.ui.Modal, title="🏦 Tạo mã QR ngân hàng"):
-    bank = discord.ui.TextInput(label="Ngân hàng", placeholder="MB, VCB, ACB, BIDV hoặc BIN", required=True, max_length=20)
-    account = discord.ui.TextInput(label="Số tài khoản", placeholder="Nhập số tài khoản", required=True, max_length=19)
-    account_name = discord.ui.TextInput(label="Tên chủ tài khoản", placeholder="NGUYEN VAN A", required=True, max_length=100)
-    amount = discord.ui.TextInput(label="Số tiền (VNĐ)", placeholder="0 = không cố định", required=True, max_length=15, default="0")
-    content = discord.ui.TextInput(label="Nội dung chuyển khoản", placeholder="Ví dụ: Nap tien", required=False, max_length=50)
+    account = discord.ui.TextInput(
+        label="Số tài khoản",
+        placeholder="Nhập số tài khoản",
+        required=True,
+        max_length=19
+    )
+    account_name = discord.ui.TextInput(
+        label="Tên chủ tài khoản",
+        placeholder="NGUYEN VAN A",
+        required=True,
+        max_length=100
+    )
+    amount = discord.ui.TextInput(
+        label="Số tiền (VNĐ)",
+        placeholder="0 = không cố định",
+        required=True,
+        max_length=15,
+        default="0"
+    )
+    content = discord.ui.TextInput(
+        label="Nội dung chuyển khoản",
+        placeholder="Ví dụ: Nap tien",
+        required=False,
+        max_length=50
+    )
+
+    def __init__(self, bank_code: str, bank_name: str):
+        super().__init__()
+        self.bank_code = bank_code
+        self.bank_name = bank_name
 
     async def on_submit(self, interaction: discord.Interaction):
-        try: amount_value = int(self.amount.value.strip().replace(",", "").replace(".", ""))
+        try:
+            amount_value = int(
+                self.amount.value.strip().replace(",", "").replace(".", "")
+            )
         except ValueError:
-            await interaction.response.send_message("❌ Số tiền phải là số hợp lệ!", ephemeral=True); return
+            await interaction.response.send_message(
+                "❌ Số tiền phải là số hợp lệ!", ephemeral=True
+            )
+            return
+
         account = self.account.value.strip()
         if not account.isdigit() or not (6 <= len(account) <= 19):
-            await interaction.response.send_message("❌ Số tài khoản phải gồm 6–19 chữ số!", ephemeral=True); return
+            await interaction.response.send_message(
+                "❌ Số tài khoản phải gồm 6–19 chữ số!", ephemeral=True
+            )
+            return
+
         if amount_value < 0:
-            await interaction.response.send_message("❌ Số tiền không được âm!", ephemeral=True); return
-        qr_url=(f"https://img.vietqr.io/image/{urllib.parse.quote(self.bank.value.strip(), safe='')}-{urllib.parse.quote(account, safe='')}-compact2.png" f"?amount={amount_value}&addInfo={urllib.parse.quote(self.content.value.strip(), safe='')}&accountName={urllib.parse.quote(self.account_name.value.strip(), safe='')}")
-        embed=discord.Embed(title="🏦 MÃ QR CHUYỂN KHOẢN", color=discord.Color.blue())
-        embed.add_field(name="Ngân hàng", value=self.bank.value.strip(), inline=True); embed.add_field(name="Số tài khoản", value=account, inline=True)
-        embed.add_field(name="Chủ tài khoản", value=self.account_name.value.strip(), inline=False); embed.add_field(name="Số tiền", value=f"{amount_value:,} VNĐ", inline=True)
-        embed.add_field(name="Nội dung", value=self.content.value.strip() or "Không cố định", inline=True); embed.set_image(url=qr_url); embed.set_footer(text="VietQR • Quét mã để chuyển khoản")
+            await interaction.response.send_message(
+                "❌ Số tiền không được âm!", ephemeral=True
+            )
+            return
+
+        qr_url = (
+            f"https://img.vietqr.io/image/"
+            f"{urllib.parse.quote(self.bank_code, safe='')}-"
+            f"{urllib.parse.quote(account, safe='')}-compact2.png"
+            f"?amount={amount_value}"
+            f"&addInfo={urllib.parse.quote(self.content.value.strip(), safe='')}"
+            f"&accountName={urllib.parse.quote(self.account_name.value.strip(), safe='')}"
+        )
+
+        embed = discord.Embed(
+            title="🏦 MÃ QR CHUYỂN KHOẢN",
+            color=discord.Color.blue()
+        )
+        embed.add_field(
+            name="Ngân hàng",
+            value=f"{self.bank_name} (`{self.bank_code}`)",
+            inline=True
+        )
+        embed.add_field(
+            name="Số tài khoản",
+            value=account,
+            inline=True
+        )
+        embed.add_field(
+            name="Chủ tài khoản",
+            value=self.account_name.value.strip(),
+            inline=False
+        )
+        embed.add_field(
+            name="Số tiền",
+            value=f"{amount_value:,} VNĐ",
+            inline=True
+        )
+        embed.add_field(
+            name="Nội dung",
+            value=self.content.value.strip() or "Không cố định",
+            inline=True
+        )
+        embed.set_image(url=qr_url)
+        embed.set_footer(text="VietQR • Quét mã để chuyển khoản")
+
         await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="taoqr", description="Mở bảng nhập để tạo mã QR chuyển khoản ngân hàng")
+
+# Danh sách ngân hàng Việt Nam thường dùng với VietQR.
+VIETNAM_BANKS = [
+    ("VCB", "Vietcombank"),
+    ("BIDV", "BIDV"),
+    ("CTG", "VietinBank"),
+    ("TCB", "Techcombank"),
+    ("MBB", "MB Bank"),
+    ("ACB", "ACB"),
+    ("VPB", "VPBank"),
+    ("TPB", "TPBank"),
+    ("STB", "Sacombank"),
+    ("EIB", "Eximbank"),
+    ("HDB", "HDBank"),
+    ("VIB", "VIB"),
+    ("OCB", "OCB"),
+    ("MSB", "MSB"),
+    ("SHB", "SHB"),
+    ("LPB", "LPBank"),
+    ("BVB", "BaoViet Bank"),
+    ("ABB", "ABBank"),
+    ("NAB", "Nam A Bank"),
+    ("VAB", "VietABank"),
+    ("SGB", "Saigonbank"),
+    ("BCA", "BAC A BANK"),
+    ("PGB", "PGBank"),
+    ("KLB", "KienlongBank"),
+]
+
+
+class BankSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(
+                label=name,
+                value=code,
+                description=f"Mã VietQR: {code}"
+            )
+            for code, name in VIETNAM_BANKS
+        ]
+        super().__init__(
+            placeholder="🏦 Chọn ngân hàng Việt Nam...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        bank_code = self.values[0]
+        bank_name = next(
+            name for code, name in VIETNAM_BANKS if code == bank_code
+        )
+        await interaction.response.send_modal(
+            QRBankModal(bank_code, bank_name)
+        )
+
+
+class BankSelectView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
+        self.add_item(BankSelect())
+
+
+@bot.tree.command(
+    name="taoqr",
+    description="Chọn ngân hàng Việt Nam và tạo mã QR chuyển khoản"
+)
 async def taoqr(interaction: discord.Interaction):
-    await interaction.response.send_modal(QRBankModal())
+    embed = discord.Embed(
+        title="🏦 CHỌN NGÂN HÀNG",
+        description="Chọn ngân hàng Việt Nam bên dưới để tiếp tục tạo mã QR.",
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text="VietQR • Hỗ trợ các ngân hàng phổ biến tại Việt Nam")
+
+    await interaction.response.send_message(
+        embed=embed,
+        view=BankSelectView(),
+        ephemeral=True
+    )
 
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
