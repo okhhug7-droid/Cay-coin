@@ -2590,6 +2590,80 @@ async def masoi_command(interaction: discord.Interaction):
         view=MasoiJoinView(room_id)
     )
 
+@bot.tree.command(name="help", description="Xem danh sách lệnh của bot")
+async def help_command(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="📚 TRỢ GIÚP BOT",
+        description="Danh sách các lệnh hiện có:",
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(
+        name="🐺 MA SÓI",
+        value=(
+            "`/masoi` — Tạo phòng Ma Sói\n"
+            "`/nhanrole` — Nhận Role tự nhận\n"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎵 ÂM NHẠC",
+        value=(
+            "`!play <tên bài/link>` — Phát nhạc\n"
+            "`!skip` — Chuyển bài\n"
+            "`!pause` — Tạm dừng\n"
+            "`!resume` — Tiếp tục\n"
+            "`!stop` — Dừng và xoá hàng chờ\n"
+            "`!queue` — Xem hàng chờ"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="🛠️ QUẢN LÝ",
+        value=(
+            "`!treocall` — Bật treo call 24/7\n"
+            "`!dungtreocall` — Dừng treo call\n"
+            "`!checktreocall` — Kiểm tra treo call\n"
+            "`!ban` / `!unban` — Ban / unban\n"
+            "`!mute` / `!unmute` — Mute / unmute\n"
+            "`!afk` — Bật AFK"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="⚙️ CẤU HÌNH",
+        value=(
+            "`/setwelcome` — Cài Welcome\n"
+            "`/setwelcomegif` — Chọn GIF Welcome từ máy\n"
+            "`/setboost` — Cài thông báo Boost\n"
+            "`/setboostrole` — Cài Role Boost\n"
+            "`/setannouncement` — Cài kênh thông báo\n"
+            "`/thongbao` — Gửi thông báo\n"
+            "`/setbirthday` — Cài sinh nhật\n"
+            "`/setupstats` — Tạo thống kê server"
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="📊 LEVEL / BÌNH CHỌN",
+        value=(
+            "`/configlevelrole` — Cấu hình Role Level\n"
+            "`/setlevelconfig` — Cấu hình thông báo lên cấp\n"
+            "`/binhchon` — Tạo bình chọn\n"
+            "`/xembinhchon <message_id>` — Xem kết quả bình chọn"
+        ),
+        inline=False
+    )
+
+    embed.set_footer(text=f"by {FOOTER_AUTHOR}")
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 if __name__ == "__main__":
     if BOT_TOKEN:
