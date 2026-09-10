@@ -43,27 +43,60 @@ Phong cách:
 - Luôn trả lời tiếng Việt nếu người dùng không yêu cầu ngôn ngữ khác.
 """
 
-# Gemini API: lấy key từ Railway Variables, không hard-code vào code.
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# Gemini API: lấy key/model từ Railway Variables, không hard-code secret.
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip().strip('"').strip("'")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip().strip('"').strip("'") or "gemini-2.5-flash"
+
+
+def _gemini_error_message(exc: Exception) -> str:
+    """Rút gọn lỗi Gemini để Discord hiển thị đúng nguyên nhân."""
+    raw = str(exc).replace("\n", " ").strip()
+    low = raw.lower()
+    if "401" in raw or "unauthenticated" in low or "api key" in low and ("invalid" in low or "expired" in low):
+        return "API key Gemini không hợp lệ/đã hết hạn. Kiểm tra lại GEMINI_API_KEY trên Railway."
+    if "403" in raw or "permission" in low or "forbidden" in low:
+        return "API key Gemini không có quyền dùng model này hoặc API chưa được cấp quyền."
+    if "429" in raw or "resource_exhausted" in low or "quota" in low or "rate limit" in low:
+        return "Gemini đã hết quota/rate limit. Thử lại sau hoặc dùng model khác."
+    if "404" in raw or "not found" in low or "is not found" in low:
+        return f"Không tìm thấy model `{GEMINI_MODEL}`. Đổi GEMINI_MODEL thành `gemini-2.5-flash` trên Railway."
+    if "timeout" in low or "deadline" in low or "timed out" in low:
+        return "Gemini phản hồi quá lâu (timeout). Thử lại sau."
+    return raw[:700] if raw else "Gemini trả về lỗi không xác định."
 
 
 def gemini_generate(prompt: str) -> str:
     if genai is None:
-        raise RuntimeError("Thiếu package google-genai. Thêm google-genai vào requirements.txt.")
+        raise RuntimeError("Thiếu package google-genai. Kiểm tra requirements.txt và Redeploy Railway.")
     if not GEMINI_API_KEY:
-        raise RuntimeError("Chưa cấu hình GEMINI_API_KEY trên Railway Variables.")
+        raise RuntimeError("Thiếu GEMINI_API_KEY trên Railway Variables.")
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    full_prompt = f"{AI_SYSTEM_PROMPT.strip()}\n\nTin nhắn người dùng:\n{prompt}"
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=full_prompt,
-    )
-    reply = (getattr(response, "text", None) or "").strip()
-    if not reply:
-        raise RuntimeError("Gemini không trả về nội dung.")
-    return reply
+    last_exc = None
+    # Ưu tiên model người dùng cấu hình, nếu model bị lỗi vì không tồn tại thì thử model nhẹ.
+    models_to_try = [GEMINI_MODEL]
+    if GEMINI_MODEL != "gemini-2.5-flash-lite":
+        models_to_try.append("gemini-2.5-flash-lite")
+
+    for model_name in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config={"system_instruction": AI_SYSTEM_PROMPT.strip()},
+            )
+            reply = (getattr(response, "text", None) or "").strip()
+            if not reply:
+                raise RuntimeError("Gemini không trả về nội dung.")
+            return reply
+        except Exception as exc:
+            last_exc = exc
+            low = str(exc).lower()
+            # Chỉ fallback khi lỗi có vẻ liên quan model; lỗi key/quota không cần gọi lại.
+            if not any(x in low for x in ("404", "not found", "model")):
+                break
+
+    raise RuntimeError(_gemini_error_message(last_exc or RuntimeError("Gemini lỗi không xác định.")))
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -1666,10 +1699,7 @@ async def on_message(message: discord.Message):
                 reply_text = await asyncio.to_thread(gemini_generate, clean_content)
             except Exception as e:
                 last_error = e
-                raise RuntimeError(
-                    "Gemini chưa được cấu hình hoặc API đang lỗi. "
-                    "Kiểm tra GEMINI_API_KEY/GEMINI_MODEL trên Railway Variables."
-                ) from e
+                raise
 
             if reply_text is None:
                 raise last_error or RuntimeError("Gemini không trả về nội dung.")
