@@ -866,80 +866,90 @@ class WelcomeConfigModal(discord.ui.Modal, title="👋 Cài đặt Welcome"):
 
 
 @bot.tree.command(
-    name="setwelcomegif",
-    description="Chọn và tải GIF Welcome từ máy tính (Admin)"
+    name="setwelcome",
+    description="Cài Welcome và chọn GIF trực tiếp từ máy (Admin)"
+)
+@discord.app_commands.describe(
+    channel="Kênh text dùng để gửi Welcome",
+    message="Nội dung Welcome. Dùng {member}, {name}, {number}, {server}",
+    gif_file="Chọn file GIF trực tiếp từ máy (không bắt buộc)"
 )
 @discord.app_commands.checks.has_permissions(administrator=True)
-async def setwelcomegif(interaction: discord.Interaction, gif_file: discord.Attachment):
-    if not gif_file.filename.lower().endswith(".gif"):
-        await interaction.response.send_message(
-            "❌ Vui lòng chọn đúng file **.gif**.",
-            ephemeral=True
-        )
-        return
+async def setwelcome(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    message: str,
+    gif_file: discord.Attachment = None
+):
+    gif_path = "welcome_gif.gif"
 
-    await gif_file.save("welcome_gif.gif")
+    if gif_file:
+        if not gif_file.filename.lower().endswith(".gif"):
+            await interaction.response.send_message(
+                "❌ Chỉ chấp nhận file **.gif**.",
+                ephemeral=True
+            )
+            return
 
+        try:
+            await gif_file.save(gif_path)
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Không thể lưu GIF: `{e}`",
+                ephemeral=True
+            )
+            return
+
+    # Nếu không chọn GIF mới, giữ GIF hiện tại của server nếu có.
     db_cursor.execute(
-        "SELECT channel_id, message FROM welcome_config WHERE guild_id = ?",
+        "SELECT gif_path FROM welcome_config WHERE guild_id = ?",
         (interaction.guild.id,)
     )
-    row = db_cursor.fetchone()
+    old_row = db_cursor.fetchone()
 
-    if row:
-        db_cursor.execute(
-            """
-            UPDATE welcome_config
-            SET gif_path = ?
-            WHERE guild_id = ?
-            """,
-            ("welcome_gif.gif", interaction.guild.id)
-        )
+    if gif_file:
+        saved_gif = gif_path
+    elif old_row and old_row[0]:
+        saved_gif = old_row[0]
     else:
-        db_cursor.execute(
-            """
-            INSERT INTO welcome_config (guild_id, channel_id, message, gif_path)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                interaction.guild.id,
-                WELCOME_CONFIG.get("channel_id"),
-                WELCOME_CONFIG.get("message", ""),
-                "welcome_gif.gif"
-            )
+        saved_gif = None
+
+    db_cursor.execute(
+        """
+        INSERT INTO welcome_config (guild_id, channel_id, message, gif_path)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(guild_id) DO UPDATE SET
+            channel_id = excluded.channel_id,
+            message = excluded.message,
+            gif_path = excluded.gif_path
+        """,
+        (
+            interaction.guild.id,
+            channel.id,
+            message.strip(),
+            saved_gif
         )
+    )
     db_conn.commit()
 
-    WELCOME_CONFIG["gif_path"] = "welcome_gif.gif"
+    WELCOME_CONFIG["channel_id"] = channel.id
+    WELCOME_CONFIG["message"] = message.strip()
+    WELCOME_CONFIG["gif_path"] = saved_gif or "welcome_gif.gif"
 
-    await interaction.response.send_message(
-        f"✅ Đã cập nhật GIF Welcome: `{gif_file.filename}`",
-        ephemeral=True
+    embed = discord.Embed(
+        title="✅ ĐÃ CÀI WELCOME",
+        color=discord.Color.green()
     )
-
-
-@bot.tree.command(
-    name="setwelcome",
-    description="Mở bảng Modal cài đặt Welcome (Admin)"
-)
-@discord.app_commands.checks.has_permissions(administrator=True)
-async def setwelcome(interaction: discord.Interaction):
-    # Nạp cấu hình hiện tại nếu có để mở form dễ chỉnh sửa.
-    db_cursor.execute(
-        "SELECT channel_id, message, gif_path FROM welcome_config WHERE guild_id = ?",
-        (interaction.guild.id,)
+    embed.add_field(name="📢 Kênh", value=channel.mention, inline=False)
+    embed.add_field(name="💬 Nội dung", value=message.strip(), inline=False)
+    embed.add_field(
+        name="🎞️ GIF",
+        value=gif_file.filename if gif_file else (saved_gif or "Không dùng GIF"),
+        inline=False
     )
-    row = db_cursor.fetchone()
+    embed.set_footer(text=f"Thực hiện bởi {interaction.user.display_name} | {FOOTER_AUTHOR}")
 
-    modal = WelcomeConfigModal()
-
-    if row:
-        channel_id, message, gif_path = row
-        modal.channel_id.default = str(channel_id)
-        modal.message.default = message
-        modal.gif_path.default = gif_path or ""
-
-    await interaction.response.send_modal(modal)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="setboost", description="Cài đặt thông báo Boost (Admin)")
