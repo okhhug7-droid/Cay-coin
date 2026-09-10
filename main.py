@@ -1243,136 +1243,100 @@ async def unmute(ctx, member: discord.Member, *, reason="Không có lý do"):
     await member.timeout(None, reason=reason)
     await ctx.send(f"🔊 Đã unmute **{member.mention}**.")
 
-@bot.tree.command(
-    name="nhanrole",
-    description="Nhận các Role tự nhận đã được Admin cài"
-)
-async def nhanrole(interaction: discord.Interaction):
-    guild = interaction.guild
-
-    if guild is None:
-        await interaction.response.send_message(
-            "❌ Lệnh này chỉ dùng trong server.",
-            ephemeral=True
-        )
-        return
-
-    db_cursor.execute(
-        "SELECT role_ids, message FROM self_role_config WHERE guild_id = ?",
-        (guild.id,)
+class NhanRoleModal(discord.ui.Modal, title="🎭 NHẬN ROLE"):
+    role_id = discord.ui.TextInput(
+        label="ID Role",
+        placeholder="Nhập ID Role Discord, ví dụ: 123456789012345678",
+        required=True,
+        max_length=25
     )
-    config = db_cursor.fetchone()
 
-    if not config:
-        await interaction.response.send_message(
-            "❌ Server chưa cài Role tự nhận. Admin chưa cài Role tự nhận.",
-            ephemeral=True
-        )
-        return
+    async def on_submit(self, interaction: discord.Interaction):
+        guild = interaction.guild
 
-    role_ids_text, message = config
-
-    try:
-        role_ids = [
-            int(x.strip())
-            for x in str(role_ids_text).split(",")
-            if x.strip()
-        ]
-    except ValueError:
-        await interaction.response.send_message(
-            "❌ Cấu hình Role tự nhận bị lỗi. Admin hãy kiểm tra lại cấu hình Role tự nhận.",
-            ephemeral=True
-        )
-        return
-
-    me = guild.me or guild.get_member(bot.user.id)
-    if me is None:
-        await interaction.response.send_message(
-            "❌ Không xác định được quyền của bot.",
-            ephemeral=True
-        )
-        return
-
-    roles = [
-        guild.get_role(role_id)
-        for role_id in role_ids
-    ]
-    roles = [
-        role for role in roles
-        if role and not role.managed and not role.is_default()
-    ]
-
-    addable_roles = [
-        role for role in roles
-        if role < me.top_role
-    ]
-
-    if not addable_roles:
-        await interaction.response.send_message(
-            "❌ Không có Role nào mà bot có thể cấp.",
-            ephemeral=True
-        )
-        return
-
-    to_add = [
-        role for role in addable_roles
-        if role not in interaction.user.roles
-    ]
-
-    if not to_add:
-        await interaction.response.send_message(
-            "ℹ️ Bạn đã có toàn bộ Role tự nhận rồi.",
-            ephemeral=True
-        )
-        return
-
-    try:
-        await interaction.user.add_roles(
-            *to_add,
-            reason=f"Tự nhận Role bằng /nhanrole bởi {interaction.user}"
-        )
-
-        gained_text = ", ".join(role.mention for role in to_add)
-
-        formatted_message = message.format(
-            member=interaction.user.mention,
-            role=gained_text,
-            server=guild.name
-        )
-
-        # Trả kết quả cho người nhận.
-        await interaction.response.send_message(
-            formatted_message,
-            ephemeral=True
-        )
-
-        # Thông báo ngay trong kênh mà người dùng vừa dùng /nhanrole.
-        public_message = (
-            f"<@&1515041455805304953>\n"
-            f"{formatted_message}"
-        )
+        if guild is None:
+            await interaction.response.send_message(
+                "❌ Lệnh này chỉ dùng trong server.",
+                ephemeral=True
+            )
+            return
 
         try:
-            await interaction.channel.send(
-                content=public_message,
-                allowed_mentions=discord.AllowedMentions(
-                    roles=True,
-                    users=True
-                )
+            role_id = int(self.role_id.value.strip())
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ ID Role phải là một dãy số hợp lệ.",
+                ephemeral=True
             )
-        except (discord.Forbidden, discord.HTTPException):
-            pass
+            return
 
-    except discord.Forbidden:
+        role = guild.get_role(role_id)
+        if role is None:
+            await interaction.response.send_message(
+                f"❌ Không tìm thấy Role có ID `{role_id}` trong server.",
+                ephemeral=True
+            )
+            return
+
+        if role.is_default() or role.managed:
+            await interaction.response.send_message(
+                "❌ Role này không thể được cấp bởi bot.",
+                ephemeral=True
+            )
+            return
+
+        me = guild.me or guild.get_member(bot.user.id)
+        if me is None:
+            await interaction.response.send_message(
+                "❌ Không xác định được Role cao nhất của bot.",
+                ephemeral=True
+            )
+            return
+
+        if role >= me.top_role:
+            await interaction.response.send_message(
+                "❌ Role này đang cao hơn hoặc bằng Role cao nhất của bot.",
+                ephemeral=True
+            )
+            return
+
+        if role in interaction.user.roles:
+            await interaction.response.send_message(
+                f"ℹ️ Bạn đã có {role.mention} rồi.",
+                ephemeral=True
+            )
+            return
+
+        try:
+            await interaction.user.add_roles(
+                role,
+                reason=f"Tự nhận Role bằng /nhanrole bởi {interaction.user}"
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "❌ Bot không có quyền cấp Role này.",
+                ephemeral=True
+            )
+            return
+        except discord.HTTPException as e:
+            await interaction.response.send_message(
+                f"❌ Không thể cấp Role: `{e}`",
+                ephemeral=True
+            )
+            return
+
         await interaction.response.send_message(
-            "❌ Bot không có quyền cấp một hoặc nhiều Role.",
+            f"✅ Bạn đã nhận {role.mention} thành công!",
             ephemeral=True
         )
-    except discord.HTTPException as e:
-        await interaction.response.send_message(
-            f"❌ Không thể nhận Role: `{e}`",
-            ephemeral=True
-        )
+
+
+@bot.tree.command(
+    name="nhanrole",
+    description="Mở bảng nhập ID Role để tự nhận Role"
+)
+async def nhanrole(interaction: discord.Interaction):
+    await interaction.response.send_modal(NhanRoleModal())
 
 
 @bot.command(name="afk")
@@ -2618,30 +2582,56 @@ def masoi_lobby_embed(room):
 
 @bot.tree.command(name="masoi", description="Tạo phòng Ma Sói")
 async def masoi_command(interaction: discord.Interaction):
-    room_id = f"{interaction.guild_id}_{interaction.channel_id}_{interaction.id}"
-    MASOI_ROOMS[room_id] = {
-        "guild_id": interaction.guild_id,
-        "channel_id": interaction.channel_id,
-        "host": interaction.user.id,
-        "players": [interaction.user.id],
-        "started": False,
-        "roles": {},
-        "room_name": "Room",
-        "max_players": 25,
-        "chat_locked": False,
-        "phase": "lobby",
-        "actions": {},
-        "dead": [],
-        "game_finished": False,
-        "winner": None,
-    }
+    try:
+        await interaction.response.defer()
 
-    room = MASOI_ROOMS[room_id]
-    embed = masoi_lobby_embed(room)
-    await interaction.response.send_message(
-        embed=embed,
-        view=MasoiJoinView(room_id)
-    )
+        if interaction.guild is None:
+            return await interaction.followup.send(
+                "❌ Lệnh `/masoi` chỉ dùng được trong server."
+            )
+
+        room_id = f"{interaction.guild_id}_{interaction.channel_id}_{interaction.id}"
+        MASOI_ROOMS[room_id] = {
+            "guild_id": interaction.guild_id,
+            "channel_id": interaction.channel_id,
+            "host": interaction.user.id,
+            "players": [interaction.user.id],
+            "started": False,
+            "roles": {},
+            "room_name": "Room",
+            "max_players": 25,
+            "password": None,
+            "chat_locked": False,
+            "phase": "lobby",
+            "actions": {},
+            "dead": [],
+            "game_finished": False,
+            "winner": None,
+        }
+
+        room = MASOI_ROOMS[room_id]
+        embed = masoi_lobby_embed(room)
+        view = MasoiJoinView(room_id)
+
+        await interaction.followup.send(embed=embed, view=view)
+
+    except Exception as e:
+        print(f"[MA SÓI] Lỗi tạo phòng: {type(e).__name__}: {e}")
+        error_text = str(e).replace("`", "'")[:900]
+
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(
+                    f"❌ Không thể tạo phòng Ma Sói.\n`{error_text}`"
+                )
+            else:
+                await interaction.response.send_message(
+                    f"❌ Không thể tạo phòng Ma Sói.\n`{error_text}`",
+                    ephemeral=True
+                )
+        except Exception as send_error:
+            print(f"[MA SÓI] Không thể gửi lỗi về Discord: {send_error}")
+
 
 @bot.tree.command(name="help", description="Xem danh sách lệnh của bot")
 async def help_command(interaction: discord.Interaction):
