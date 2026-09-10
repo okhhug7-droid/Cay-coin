@@ -195,6 +195,70 @@ db_cursor.execute("""
 """)
 db_conn.commit()
 
+# --- CACHE CHECK STK VIETQR + GIỚI HẠN LOOKUP ---
+db_cursor.execute("""
+    CREATE TABLE IF NOT EXISTS vietqr_stk_cache (
+        bank_code TEXT NOT NULL,
+        account_number TEXT NOT NULL,
+        account_name TEXT NOT NULL,
+        verified_at TEXT NOT NULL,
+        PRIMARY KEY (bank_code, account_number)
+    )
+""")
+
+db_cursor.execute("""
+    CREATE TABLE IF NOT EXISTS vietqr_daily_usage (
+        usage_date TEXT PRIMARY KEY,
+        lookup_count INTEGER NOT NULL DEFAULT 0
+    )
+""")
+db_conn.commit()
+
+VIETQR_DAILY_LOOKUP_LIMIT = int(os.getenv("VIETQR_DAILY_LOOKUP_LIMIT", "25"))
+
+
+def vietqr_today():
+    # Hạn mức được tính theo ngày Việt Nam (UTC+7).
+    return (datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=7)))
+            .date().isoformat())
+
+
+def vietqr_daily_lookup_count():
+    row = db_cursor.execute(
+        "SELECT lookup_count FROM vietqr_daily_usage WHERE usage_date = ?",
+        (vietqr_today(),)
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def vietqr_increment_daily_lookup():
+    today = vietqr_today()
+    db_cursor.execute(
+        "INSERT INTO vietqr_daily_usage (usage_date, lookup_count) VALUES (?, 1) "
+        "ON CONFLICT(usage_date) DO UPDATE SET lookup_count = lookup_count + 1",
+        (today,)
+    )
+    db_conn.commit()
+
+
+def vietqr_get_cached_name(bank_code: str, account_number: str):
+    row = db_cursor.execute(
+        "SELECT account_name FROM vietqr_stk_cache WHERE bank_code = ? AND account_number = ?",
+        (bank_code.upper(), account_number)
+    ).fetchone()
+    return row[0] if row else None
+
+
+def vietqr_save_cache(bank_code: str, account_number: str, account_name: str):
+    db_cursor.execute(
+        "INSERT INTO vietqr_stk_cache (bank_code, account_number, account_name, verified_at) "
+        "VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(bank_code, account_number) DO UPDATE SET "
+        "account_name = excluded.account_name, verified_at = excluded.verified_at",
+        (bank_code.upper(), account_number, account_name, datetime.datetime.now(datetime.timezone.utc).isoformat())
+    )
+    db_conn.commit()
+
 voice_keepalive_tasks = {}
 
 # --- HỆ THỐNG PHÁT NHẠC ---
@@ -1771,11 +1835,20 @@ async def on_message(message: discord.Message):
 
 
 async def vietqr_lookup_account(bank_code: str, account_number: str):
-    """Tra cứu tên chủ tài khoản qua VietQR.io. Cần VIETQR_CLIENT_ID và VIETQR_API_KEY."""
-    client_id = os.getenv("VIETQR_CLIENT_ID", "95e2598b-f1ef-4109-9690-9f55b0d2e2c1").strip()
-    api_key = os.getenv("VIETQR_API_KEY", "d18533bd-a8f3-4e72-ab55-e315099f021d").strip()
+    """Tra cứu tên chủ tài khoản qua VietQR.io, có cache và giới hạn lookup/ngày."""
+    client_id = os.getenv("VIETQR_CLIENT_ID", "").strip()
+    api_key = os.getenv("VIETQR_API_KEY", "").strip()
     if not client_id or not api_key:
         return None, "missing_credentials"
+
+    # Nếu STK đã từng xác minh thành công thì dùng cache, không tốn thêm lượt API.
+    cached_name = vietqr_get_cached_name(bank_code, account_number)
+    if cached_name:
+        return cached_name, "cached"
+
+    # Mỗi ngày chỉ cho tối đa 25 lookup mới theo cấu hình mặc định.
+    if vietqr_daily_lookup_count() >= VIETQR_DAILY_LOOKUP_LIMIT:
+        return None, "daily_limit"
 
     # Lấy BIN từ danh sách ngân hàng chính thức của VietQR.
     try:
@@ -1810,8 +1883,24 @@ async def vietqr_lookup_account(bank_code: str, account_number: str):
             result = json.loads(resp.read().decode("utf-8"))
 
         if str(result.get("code")) == "00" and result.get("data", {}).get("accountName"):
-            return result["data"]["accountName"].strip(), "ok"
-        return None, result.get("desc", "STK không hợp lệ")
+            verified_name = result["data"]["accountName"].strip()
+            vietqr_increment_daily_lookup()
+            vietqr_save_cache(bank_code, account_number, verified_name)
+            return verified_name, "ok"
+
+        desc = result.get("desc", "STK không hợp lệ")
+        # Nếu VietQR báo hết hạn mức thì khóa lookup mới cho ngày hiện tại.
+        desc_lower = str(desc).lower()
+        if any(x in desc_lower for x in ("limit", "quota", "rate", "exceed", "hạn mức")):
+            db_cursor.execute(
+                "INSERT INTO vietqr_daily_usage (usage_date, lookup_count) VALUES (?, ?) "
+                "ON CONFLICT(usage_date) DO UPDATE SET lookup_count = ?",
+                (vietqr_today(), VIETQR_DAILY_LOOKUP_LIMIT, VIETQR_DAILY_LOOKUP_LIMIT)
+            )
+            db_conn.commit()
+            return None, "daily_limit"
+        # Lookup không thành công không tính vào cache.
+        return None, desc
     except Exception as e:
         return None, str(e)
 
@@ -1878,7 +1967,7 @@ class QRBankModal(discord.ui.Modal, title="🏦 Tạo mã QR ngân hàng"):
         entered_name = self.account_name.value.strip()
         display_name = entered_name
 
-        if verify_status == "ok":
+        if verify_status in ("ok", "cached"):
             # Nếu tên nhập khác tên VietQR trả về thì dừng, tránh tạo QR sai người.
             if verified_name.casefold() != entered_name.casefold():
                 await interaction.response.send_message(
@@ -1895,7 +1984,16 @@ class QRBankModal(discord.ui.Modal, title="🏦 Tạo mã QR ngân hàng"):
         elif verify_status == "missing_credentials":
             await interaction.response.send_message(
                 "⚠️ **Chưa cấu hình VietQR API** nên bot không thể check tên STK tự động.\n"
-                "Hãy cấu hình `VIETQR_CLIENT_ID` và `VIETQR_API_KEY` để /taoqr tự xác minh STK trước khi tạo QR.",
+                "Hãy cấu hình `VIETQR_CLIENT_ID` và `VIETQR_API_KEY` trên Railway Variables.",
+                ephemeral=True
+            )
+            return
+        elif verify_status == "daily_limit":
+            await interaction.response.send_message(
+                f"⛔ **Hôm nay đã hết lượt tạo QR!**\n\n"
+                f"Bot đã dùng hết **{VIETQR_DAILY_LOOKUP_LIMIT} lượt CHECK STK mới** trong ngày hôm nay.\n"
+                "🔒 STK đã từng kiểm tra vẫn có thể tạo QR nhờ cache.\n"
+                "🕛 Sang ngày mới bot sẽ mở lại lượt kiểm tra mới.",
                 ephemeral=True
             )
             return
