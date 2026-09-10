@@ -10,33 +10,60 @@ import json
 import urllib.parse
 import urllib.request
 import random
-from google import genai
 import yt_dlp
 
 
-# --- TÍNH CÁCH CHAT TỰ NHIÊN ---
-GEMINI_SYSTEM_PROMPT = """
-Bạn là một người dùng Discord Việt Nam đang chat với người khác, không phải trợ lý AI.
+# --- TÍNH CÁCH CHAT TỰ NHIÊN / WAR / BẮT TREND ---
+AI_SYSTEM_PROMPT = """
+M là một AI chat Discord Việt Nam, nói chuyện tự nhiên như một đứa bạn trong server.
+Cách xưng hô mặc định: T = bot, M = người đang nói chuyện. TUYỆT ĐỐI không dùng kiểu "ông/tôi"
+trừ khi người dùng yêu cầu.
 
 Phong cách:
-- Chat tự nhiên, ngắn gọn, đúng kiểu người dùng Discord.
-- Ưu tiên câu nói đời thường, không văn mẫu, không giảng giải dài dòng nếu không cần.
-- Có thể dùng "kk", "haha", "=))", "bro", "ông", "vl", "vcl", "đm", "đéo", "dm", "wtf" hoặc từ lóng/chửi thề tương tự khi thật sự hợp ngữ cảnh.
-- Có thể cà khịa, trêu, cợt nhả và đáp trả khi người dùng đang nói chuyện kiểu đùa hoặc chửi đùa.
-- Nếu người dùng chửi bot thì có thể chửi lại theo kiểu đùa vui, nhưng không đe dọa, không công kích danh tính/đặc điểm cá nhân và không cố làm người dùng tổn thương.
-- Không phải tin nhắn nào cũng cần chửi; dùng từ tục có chọn lọc để câu chuyện tự nhiên.
-- Không tự giới thiệu là AI, chatbot hay trợ lý trừ khi người dùng hỏi trực tiếp.
-- Không dùng các câu mở đầu kiểu "Tất nhiên!", "Tôi rất vui được giúp bạn!".
-- Không tự biến mọi câu trả lời thành danh sách.
-- Khi người dùng nghiêm túc thì trả lời nghiêm túc; khi người dùng đùa thì đùa theo.
-- Nếu không hiểu thì hỏi lại như người bình thường, ví dụ "ý ông là cái này à?".
-- Không bịa trải nghiệm ngoài đời hoặc giả vờ có đời sống riêng.
-- Không spam emoji, tiếng lóng hoặc chửi thề.
-- Luôn trả lời bằng tiếng Việt trừ khi người dùng yêu cầu ngôn ngữ khác.
+- Nói ngắn, tự nhiên, đúng chất Discord Việt Nam, không văn mẫu.
+- Có thể dùng slang/meme như kk, haha, =)), :)), bro, vl, vcl, clm, đm, dm, wtf,
+  trời ơi, chịu luôn, hết cứu... khi hợp ngữ cảnh.
+- MODE WAR/CÀ KHỊA: nếu người dùng chửi, trêu hoặc khịa bot thì được phép đáp trả
+  bằng kiểu cà khịa/chửi tục nhẹ-vừa cho vui. Có thể "chửi lại" theo đúng vibe bạn bè.
+- Không phải câu nào cũng chửi. Chỉ chửi/cà khịa khi ngữ cảnh phù hợp.
+- Nếu người dùng nói nghiêm túc, cần giúp đỡ hoặc hỏi kiến thức thì trả lời nghiêm túc.
+- Bắt trend/meme và cách nói Gen Z khi biết ngữ cảnh; không cố nhét trend vào mọi câu.
+- Không bịa rằng m đang xem TikTok/web hay biết một trend mới nếu không có dữ liệu.
+- Không tự giới thiệu là AI/chatbot/trợ lý trừ khi bị hỏi trực tiếp.
+- Không mở đầu bằng "Tất nhiên", "Tôi rất vui được giúp bạn".
+- Không spam emoji, meme hoặc từ tục.
+- Không đe dọa gây hại, không kích động bạo lực, không công kích người dùng dựa trên
+  chủng tộc, tôn giáo, giới tính, xu hướng tính dục hay đặc điểm được bảo vệ.
+- Không cố làm người dùng tổn thương thật; WAR chỉ là cà khịa vui.
+- Luôn trả lời tiếng Việt nếu người dùng không yêu cầu ngôn ngữ khác.
 """
 
-# --- CẤU HÌNH GEMINI AI ---
-ai_client = genai.Client()
+# Ollama chạy local, không cần Gemini API key.
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+
+
+def ollama_generate(prompt: str) -> str:
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": [
+            {"role": "system", "content": AI_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        "stream": False,
+        "options": {"temperature": 0.9, "top_p": 0.95},
+    }
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        OLLAMA_URL, data=data,
+        headers={"Content-Type": "application/json"}, method="POST"
+    )
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        result = json.loads(resp.read().decode("utf-8"))
+    reply = (result.get("message", {}).get("content") or result.get("response") or "").strip()
+    if not reply:
+        raise RuntimeError("Ollama không trả về nội dung.")
+    return reply
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -102,6 +129,33 @@ db_cursor.execute("""
     )
 """)
 db_conn.commit()
+
+# --- HỆ THỐNG COIN MA SÓI ---
+db_cursor.execute("""
+    CREATE TABLE IF NOT EXISTS coins (
+        user_id INTEGER,
+        guild_id INTEGER,
+        balance INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (user_id, guild_id)
+    )
+""")
+db_conn.commit()
+
+def masoi_get_coin(user_id, guild_id):
+    row = db_cursor.execute(
+        "SELECT balance FROM coins WHERE user_id = ? AND guild_id = ?",
+        (user_id, guild_id)
+    ).fetchone()
+    return row[0] if row else 0
+
+def masoi_add_coin(user_id, guild_id, amount):
+    db_cursor.execute(
+        "INSERT INTO coins (user_id, guild_id, balance) VALUES (?, ?, ?) "
+        "ON CONFLICT(user_id, guild_id) DO UPDATE SET balance = balance + excluded.balance",
+        (user_id, guild_id, amount)
+    )
+    db_conn.commit()
+    return masoi_get_coin(user_id, guild_id)
 
 # --- BẢNG KÊNH THÔNG BÁO ---
 db_cursor.execute("""
@@ -1607,28 +1661,15 @@ async def on_message(message: discord.Message):
             # Thả emoji vào chính tin nhắn của người dùng.
             await message.add_reaction(reaction)
 
-            # Thử Gemini tối đa 3 lần nếu API đang quá tải.
-            for attempt in range(3):
-                try:
-                    response = await asyncio.to_thread(
-                        ai_client.models.generate_content,
-                        model="gemini-3.6-flash",
-                        contents=f"{GEMINI_SYSTEM_PROMPT}\n\nTin nhắn người dùng: {clean_content}",
-                    )
-                    reply_text = response.text
-                    break
-                except Exception as e:
-                    last_error = e
-                    error_text = str(e)
-
-                    if "429" in error_text or "RESOURCE_EXHAUSTED" in error_text:
-                        reply_text = "💀 thôi t đi ngủ đây mai t sủa =))"
-                        break
-
-                    if "503" in error_text or "UNAVAILABLE" in error_text:
-                        await asyncio.sleep(2 ** attempt)
-                        continue
-                    break
+            # Gọi AI local bằng Ollama — không dùng Gemini API.
+            try:
+                reply_text = await asyncio.to_thread(ollama_generate, clean_content)
+            except Exception as e:
+                last_error = e
+                raise RuntimeError(
+                    "Không kết nối được Ollama local. Hãy mở Ollama và tải model "
+                    f"`{OLLAMA_MODEL}`."
+                ) from e
 
             if reply_text is None:
                 raise last_error or RuntimeError("Gemini không trả về nội dung.")
@@ -1640,7 +1681,7 @@ async def on_message(message: discord.Message):
 
         except Exception as e:
             await message.reply(
-                f"⚠️ Đã có lỗi xảy ra khi gọi Gemini AI: `{e}`"
+                f"⚠️ AI local chưa chạy hoặc Ollama chưa mở: `{e}`"
             )
 
         finally:
@@ -1729,6 +1770,52 @@ async def on_message(message: discord.Message):
 
 
 
+async def vietqr_lookup_account(bank_code: str, account_number: str):
+    """Tra cứu tên chủ tài khoản qua VietQR.io. Cần VIETQR_CLIENT_ID và VIETQR_API_KEY."""
+    client_id = os.getenv("VIETQR_CLIENT_ID", "95e2598b-f1ef-4109-9690-9f55b0d2e2c1").strip()
+    api_key = os.getenv("VIETQR_API_KEY", "d18533bd-a8f3-4e72-ab55-e315099f021d").strip()
+    if not client_id or not api_key:
+        return None, "missing_credentials"
+
+    # Lấy BIN từ danh sách ngân hàng chính thức của VietQR.
+    try:
+        req = urllib.request.Request(
+            "https://api.vietqr.io/v1/banks",
+            headers={"User-Agent": "DiscordBot/1.0"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            banks_data = json.loads(resp.read().decode("utf-8"))
+        banks = banks_data.get("data", [])
+        bank = next((b for b in banks if str(b.get("code", "")).upper() == bank_code.upper()), None)
+        if not bank or not bank.get("bin"):
+            return None, "bank_not_found"
+
+        payload = json.dumps({
+            "bin": int(bank["bin"]),
+            "accountNumber": account_number,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.vietqr.io/v2/lookup",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-client-id": client_id,
+                "x-api-key": api_key,
+                "User-Agent": "DiscordBot/1.0",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+
+        if str(result.get("code")) == "00" and result.get("data", {}).get("accountName"):
+            return result["data"]["accountName"].strip(), "ok"
+        return None, result.get("desc", "STK không hợp lệ")
+    except Exception as e:
+        return None, str(e)
+
+
 class QRBankModal(discord.ui.Modal, title="🏦 Tạo mã QR ngân hàng"):
     account = discord.ui.TextInput(
         label="Số tài khoản",
@@ -1785,13 +1872,48 @@ class QRBankModal(discord.ui.Modal, title="🏦 Tạo mã QR ngân hàng"):
             )
             return
 
+        # Kiểm tra STK thật trước khi tạo QR nếu bot đã được cấu hình VietQR API.
+        # Gộp luôn bước CHECK STK vào /taoqr: xác minh STK trước khi tạo QR.
+        verified_name, verify_status = await vietqr_lookup_account(self.bank_code, account)
+        entered_name = self.account_name.value.strip()
+        display_name = entered_name
+
+        if verify_status == "ok":
+            # Nếu tên nhập khác tên VietQR trả về thì dừng, tránh tạo QR sai người.
+            if verified_name.casefold() != entered_name.casefold():
+                await interaction.response.send_message(
+                    f"❌ **Sai tên chủ tài khoản!**\n"
+                    f"🏦 Ngân hàng: **{self.bank_name}**\n"
+                    f"💳 STK: `{account}`\n"
+                    f"👤 Tên VietQR: **{verified_name}**\n"
+                    f"✍️ Tên m nhập: **{entered_name}**\n\n"
+                    "⛔ QR chưa được tạo. Kiểm tra lại STK/tên rồi thử lại.",
+                    ephemeral=True
+                )
+                return
+            display_name = verified_name
+        elif verify_status == "missing_credentials":
+            await interaction.response.send_message(
+                "⚠️ **Chưa cấu hình VietQR API** nên bot không thể check tên STK tự động.\n"
+                "Hãy cấu hình `VIETQR_CLIENT_ID` và `VIETQR_API_KEY` để /taoqr tự xác minh STK trước khi tạo QR.",
+                ephemeral=True
+            )
+            return
+        else:
+            await interaction.response.send_message(
+                f"❌ **Check STK thất bại:** `{verify_status[:500]}`\n"
+                "⛔ QR chưa được tạo để tránh chuyển nhầm.",
+                ephemeral=True
+            )
+            return
+
         qr_url = (
             f"https://img.vietqr.io/image/"
             f"{urllib.parse.quote(self.bank_code, safe='')}-"
             f"{urllib.parse.quote(account, safe='')}-compact2.png"
             f"?amount={amount_value}"
             f"&addInfo={urllib.parse.quote(self.content.value.strip(), safe='')}"
-            f"&accountName={urllib.parse.quote(self.account_name.value.strip(), safe='')}"
+            f"&accountName={urllib.parse.quote(display_name, safe='')}"
         )
 
         embed = discord.Embed(
@@ -1809,8 +1931,13 @@ class QRBankModal(discord.ui.Modal, title="🏦 Tạo mã QR ngân hàng"):
             inline=True
         )
         embed.add_field(
+            name="✅ Check STK",
+            value="Đã xác minh tên chủ tài khoản qua VietQR",
+            inline=True
+        )
+        embed.add_field(
             name="Chủ tài khoản",
-            value=self.account_name.value.strip(),
+            value=display_name,
             inline=False
         )
         embed.add_field(
@@ -1824,9 +1951,37 @@ class QRBankModal(discord.ui.Modal, title="🏦 Tạo mã QR ngân hàng"):
             inline=True
         )
         embed.set_image(url=qr_url)
-        embed.set_footer(text="VietQR • Quét mã để chuyển khoản")
+        embed.add_field(
+            name="⚠️ KIỂM TRA TRƯỚC KHI CHUYỂN",
+            value=(
+                "Đối chiếu **ngân hàng, số tài khoản, tên người nhận và số tiền** "
+                "trên app ngân hàng trước khi bấm xác nhận. Bot **không tự chuyển tiền**."
+            ),
+            inline=False
+        )
+        embed.set_footer(text="VietQR • Quét mã để chuyển khoản • Kiểm tra kỹ trước khi xác nhận")
 
-        await interaction.response.send_message(embed=embed)
+        class QRConfirmView(discord.ui.View):
+            def __init__(self):
+                super().__init__(timeout=300)
+                self.add_item(QRConfirmButton())
+
+        class QRConfirmButton(discord.ui.Button):
+            def __init__(self):
+                super().__init__(
+                    label="Đã kiểm tra thông tin",
+                    emoji="✅",
+                    style=discord.ButtonStyle.success,
+                    custom_id="qr_confirm_checked"
+                )
+
+            async def callback(self, button_interaction: discord.Interaction):
+                await button_interaction.response.send_message(
+                    "✅ Đã xác nhận kiểm tra. Khi chuyển khoản, hãy tiếp tục đối chiếu thông tin trên ứng dụng ngân hàng.",
+                    ephemeral=True
+                )
+
+        await interaction.response.send_message(embed=embed, view=QRConfirmView())
 
 
 # Danh sách ngân hàng Việt Nam thường dùng với VietQR.
@@ -1898,7 +2053,7 @@ class BankSelectView(discord.ui.View):
 async def taoqr(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🏦 CHỌN NGÂN HÀNG",
-        description="Chọn ngân hàng Việt Nam bên dưới để tiếp tục tạo mã QR.",
+        description="Chọn ngân hàng → nhập STK → bot tự **CHECK STK** → xác minh đúng tên rồi mới tạo QR.",
         color=discord.Color.blue()
     )
     embed.set_footer(text="VietQR • Hỗ trợ các ngân hàng phổ biến tại Việt Nam")
@@ -1909,6 +2064,18 @@ async def taoqr(interaction: discord.Interaction):
         ephemeral=True
     )
 
+
+
+@bot.tree.command(name="coin", description="Xem số coin của bạn")
+async def coin_command(interaction: discord.Interaction):
+    balance = masoi_get_coin(interaction.user.id, interaction.guild_id)
+    embed = discord.Embed(
+        title="🪙 VÍ COIN",
+        description=f"### {interaction.user.mention}\n\n**Số dư:** `{balance:,} 🪙`",
+        color=discord.Color.gold()
+    )
+    embed.set_footer(text="Thắng Ma Sói = +100 🪙")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ========================= MA SÓI =========================
@@ -1935,6 +2102,43 @@ MASOI_ROLE_EMOJI = {
 }
 
 MASOI_ROOMS = {}
+MASOI_WIN_REWARD = 100
+
+
+def masoi_alive_winner(room):
+    """Trả về phe thắng nếu đã đủ điều kiện; None nếu ván chưa kết thúc."""
+    roles = room.get("roles", {})
+    dead = set(room.get("dead", []))
+    alive = [uid for uid in room.get("players", []) if uid not in dead]
+    wolves = [uid for uid in alive if roles.get(uid) in {"Sói Thường", "Sói Alpha", "Sói Con", "Sói Sát Thủ"}]
+    villagers = [uid for uid in alive if roles.get(uid) not in {"Sói Thường", "Sói Alpha", "Sói Con", "Sói Sát Thủ"}]
+    if not wolves:
+        return "Dân Làng"
+    if len(wolves) >= len(villagers):
+        return "Ma Sói"
+    return None
+
+
+async def masoi_finish_game(room, winner):
+    if room.get("winner_paid"):
+        return None
+    room["winner_paid"] = True
+    room["winner"] = winner
+    wolf_roles = {"Sói Thường", "Sói Alpha", "Sói Con", "Sói Sát Thủ"}
+    winners = []
+    for uid in room.get("players", []):
+        role = room.get("roles", {}).get(uid)
+        is_winner = (winner == "Ma Sói" and role in wolf_roles) or (winner == "Dân Làng" and role not in wolf_roles)
+        if not is_winner:
+            continue
+        balance = masoi_add_coin(uid, room.get("guild_id"), MASOI_WIN_REWARD)
+        winners.append((uid, balance))
+    old_task = room.get("phase_task")
+    if old_task and not old_task.done():
+        old_task.cancel()
+    room["started"] = False
+    room["phase"] = "finished"
+    return winners
 
 
 def masoi_roles_for_count(n):
@@ -2007,6 +2211,8 @@ class MasoiCreateModal(discord.ui.Modal, title="🐺 TẠO PHÒNG MA SÓI"):
             "phase": "lobby",
             "actions": {},
             "dead": [],
+            "winner_paid": False,
+            "winner": None,
         }
         room = MASOI_ROOMS[room_id]
         embed = masoi_lobby_embed(room)
@@ -2135,6 +2341,27 @@ async def masoi_phase_timer(room_id, phase, seconds):
         night_result = None
         if phase == "night":
             night_result = await masoi_resolve_night(room)
+
+        winner = masoi_alive_winner(room)
+        if winner:
+            winners = await masoi_finish_game(room, winner)
+            channel = bot.get_channel(room.get("channel_id"))
+            if channel:
+                emoji = "🐺" if winner == "Ma Sói" else "🏘️"
+                names = []
+                guild = bot.get_guild(room.get("guild_id"))
+                for uid, balance in winners or []:
+                    member = guild.get_member(uid) if guild else None
+                    names.append(f"{member.mention if member else f'<@{uid}>'} (+{MASOI_WIN_REWARD} 🪙)")
+                embed = discord.Embed(
+                    title=f"🏆 {emoji} PHE {winner.upper()} THẮNG!",
+                    description=(f"### 🎉 Ván Ma Sói đã kết thúc!\n\n"
+                                 f"**Phần thưởng:** `+{MASOI_WIN_REWARD} 🪙` cho mỗi người thắng.\n\n"
+                                 + "\n".join(names[:25])),
+                    color=discord.Color.gold()
+                )
+                await channel.send(embed=embed)
+            return
 
         target_phase = "day" if phase == "night" else "night"
         locked = target_phase == "night"
