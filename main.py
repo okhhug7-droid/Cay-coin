@@ -12,11 +12,6 @@ import urllib.request
 import random
 from google import genai
 import yt_dlp
-from aiohttp import web
-import hmac
-import hashlib
-import time
-import secrets
 
 
 # --- TÍNH CÁCH CHAT TỰ NHIÊN ---
@@ -109,208 +104,8 @@ db_cursor.execute("""
 """)
 db_conn.commit()
 
-# --- THANH TOÁN VIETQR + XÁC MINH GIAO DỊCH QUA SEPAY ---
-# VietQR chỉ tạo mã QR; việc xác minh tiền vào cần webhook từ nhà cung cấp
-# biến động số dư (ở đây dùng SePay). Các khóa bí mật đọc từ biến môi trường.
-SEPAY_WEBHOOK_SECRET = os.getenv("SEPAY_WEBHOOK_SECRET", "").strip()
-SEPAY_API_KEY = os.getenv("SEPAY_API_KEY", "").strip()
-PAYMENT_BANK_CODE = os.getenv("PAYMENT_BANK_CODE", "").strip().upper()
-PAYMENT_ACCOUNT = os.getenv("PAYMENT_ACCOUNT", "").strip()
-PAYMENT_ACCOUNT_NAME = os.getenv("PAYMENT_ACCOUNT_NAME", "").strip()
-PAYMENT_WEBHOOK_HOST = os.getenv("PAYMENT_WEBHOOK_HOST", "0.0.0.0")
-PAYMENT_WEBHOOK_PORT = int(os.getenv("PAYMENT_WEBHOOK_PORT", "8080"))
-PAYMENT_PUBLIC_PATH = os.getenv("PAYMENT_PUBLIC_PATH", "/sepay/webhook")
-COIN_PER_VND = int(os.getenv("COIN_PER_VND", "1"))
-PAYMENT_CODE_PREFIX = os.getenv("PAYMENT_CODE_PREFIX", "BDT").upper()
-PAYMENT_WEBHOOK_MAX_AGE = int(os.getenv("PAYMENT_WEBHOOK_MAX_AGE", "300"))
-
-# Mỗi yêu cầu nạp có mã riêng; transaction_id được đánh dấu đã xử lý để chống cộng coin 2 lần.
-db_cursor.execute("""
-    CREATE TABLE IF NOT EXISTS payment_orders (
-        order_code TEXT PRIMARY KEY,
-        user_id INTEGER NOT NULL,
-        guild_id INTEGER NOT NULL,
-        amount_vnd INTEGER NOT NULL,
-        coin_amount INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        transaction_id TEXT,
-        created_at TEXT NOT NULL,
-        paid_at TEXT
-    )
-""")
-db_cursor.execute("""
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_transaction_id
-    ON payment_orders(transaction_id)
-    WHERE transaction_id IS NOT NULL
-""")
-db_conn.commit()
-
-payment_web_runner = None
-payment_web_site = None
 
 
-def payment_configured():
-    return bool(PAYMENT_BANK_CODE and PAYMENT_ACCOUNT and PAYMENT_ACCOUNT_NAME)
-
-
-def make_payment_code():
-    # Mã ngắn, dễ đọc và đủ khó đoán để tránh nhập nhầm đơn.
-    return f"{PAYMENT_CODE_PREFIX}{secrets.token_hex(4).upper()}"
-
-
-def verify_sepay_request(raw_body: bytes, headers):
-    # Ưu tiên HMAC-SHA256; nếu chưa cấu hình HMAC thì hỗ trợ API Key.
-    if SEPAY_WEBHOOK_SECRET:
-        signature = headers.get("X-SePay-Signature", "")
-        timestamp = headers.get("X-SePay-Timestamp", "")
-        try:
-            ts = int(timestamp)
-        except (TypeError, ValueError):
-            return False
-        if abs(int(time.time()) - ts) > PAYMENT_WEBHOOK_MAX_AGE:
-            return False
-        expected = "sha256=" + hmac.new(
-            SEPAY_WEBHOOK_SECRET.encode("utf-8"),
-            f"{ts}.".encode("utf-8") + raw_body,
-            hashlib.sha256
-        ).hexdigest()
-        return hmac.compare_digest(expected, signature)
-
-    if SEPAY_API_KEY:
-        auth = headers.get("Authorization", "")
-        return hmac.compare_digest(auth, f"Apikey {SEPAY_API_KEY}")
-
-    # Không nên để trống cả hai ở production.
-    return False
-
-
-def extract_payment_code(content: str):
-    text = (content or "").upper()
-    import re
-    match = re.search(r"\b" + re.escape(PAYMENT_CODE_PREFIX) + r"[A-Z0-9]{8}\b", text)
-    return match.group(0) if match else None
-
-
-async def sepay_webhook(request: web.Request):
-    raw_body = await request.read()
-    if not verify_sepay_request(raw_body, request.headers):
-        return web.json_response({"success": False, "message": "Unauthorized"}, status=401)
-
-    try:
-        payload = json.loads(raw_body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return web.json_response({"success": False, "message": "Invalid JSON"}, status=400)
-
-    # Chỉ xử lý tiền vào.
-    if str(payload.get("transferType", "")).lower() != "in":
-        return web.json_response({"success": True, "ignored": "not_incoming"})
-
-    transaction_id = str(payload.get("id", "")).strip()
-    account_number = str(payload.get("accountNumber", "")).strip()
-    content = str(payload.get("content", ""))
-    try:
-        transfer_amount = int(payload.get("transferAmount", 0))
-    except (TypeError, ValueError):
-        transfer_amount = 0
-
-    if not transaction_id or transfer_amount <= 0:
-        return web.json_response({"success": False, "message": "Invalid transaction"}, status=400)
-
-    # Kiểm tra tiền phải vào đúng tài khoản nhận đã cấu hình.
-    if PAYMENT_ACCOUNT and account_number and account_number != PAYMENT_ACCOUNT:
-        return web.json_response({"success": True, "ignored": "wrong_account"})
-
-    order_code = extract_payment_code(content)
-    if not order_code:
-        return web.json_response({"success": True, "ignored": "missing_payment_code"})
-
-    row = db_cursor.execute(
-        "SELECT user_id, guild_id, amount_vnd, coin_amount, status FROM payment_orders WHERE order_code = ?",
-        (order_code,)
-    ).fetchone()
-    if not row:
-        return web.json_response({"success": True, "ignored": "unknown_payment_code"})
-
-    user_id, guild_id, amount_vnd, coin_amount, status = row
-    if status != "pending":
-        return web.json_response({"success": True, "ignored": "already_processed"})
-
-    # Không cho thanh toán thiếu tiền. Dư tiền vẫn ghi nhận toàn bộ theo đơn đã tạo.
-    if transfer_amount < amount_vnd:
-        return web.json_response({"success": True, "ignored": "insufficient_amount"})
-
-    try:
-        db_cursor.execute("""
-            UPDATE payment_orders
-            SET status = 'paid', transaction_id = ?, paid_at = ?
-            WHERE order_code = ? AND status = 'pending'
-        """, (transaction_id, datetime.datetime.now(datetime.timezone.utc).isoformat(), order_code))
-        if db_cursor.rowcount != 1:
-            db_conn.rollback()
-            return web.json_response({"success": True, "ignored": "already_processed"})
-        masoi_add_coin(user_id, guild_id, coin_amount)
-        db_conn.commit()
-    except sqlite3.IntegrityError:
-        db_conn.rollback()
-        return web.json_response({"success": True, "ignored": "duplicate_transaction"})
-
-    guild = bot.get_guild(guild_id)
-    if guild:
-        member = guild.get_member(user_id)
-        if member:
-            try:
-                await member.send(
-                    f"✅ Đã xác minh VietQR! Mã `{order_code}`\n"
-                    f"💰 Đã nhận: **{transfer_amount:,} VNĐ**\n"
-                    f"🪙 Cộng: **{coin_amount:,} coin**\n"
-                    f"💳 Số dư mới: **{masoi_get_coin(user_id, guild_id):,} coin**"
-                )
-            except discord.HTTPException:
-                pass
-
-    return web.json_response({"success": True, "verified": True, "order_code": order_code})
-
-
-async def start_payment_web_server():
-    global payment_web_runner, payment_web_site
-    if payment_web_runner is not None:
-        return
-    app = web.Application()
-    app.router.add_post(PAYMENT_PUBLIC_PATH, sepay_webhook)
-    app.router.add_get("/", lambda request: web.json_response({"ok": True, "service": "vietqr-payment"}))
-    payment_web_runner = web.AppRunner(app)
-    await payment_web_runner.setup()
-    payment_web_site = web.TCPSite(payment_web_runner, PAYMENT_WEBHOOK_HOST, PAYMENT_WEBHOOK_PORT)
-    await payment_web_site.start()
-    print(f"💳 VietQR/SePay webhook đang nghe {PAYMENT_WEBHOOK_HOST}:{PAYMENT_WEBHOOK_PORT}{PAYMENT_PUBLIC_PATH}")
-
-
-# --- HỆ THỐNG COIN MA SÓI ---
-db_cursor.execute("""
-    CREATE TABLE IF NOT EXISTS coins (
-        user_id INTEGER,
-        guild_id INTEGER,
-        balance INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (user_id, guild_id)
-    )
-""")
-db_conn.commit()
-
-def masoi_get_coin(user_id, guild_id):
-    row = db_cursor.execute(
-        "SELECT balance FROM coins WHERE user_id = ? AND guild_id = ?",
-        (user_id, guild_id)
-    ).fetchone()
-    return row[0] if row else 0
-
-def masoi_add_coin(user_id, guild_id, amount):
-    db_cursor.execute(
-        "INSERT INTO coins (user_id, guild_id, balance) VALUES (?, ?, ?) "
-        "ON CONFLICT(user_id, guild_id) DO UPDATE SET balance = balance + excluded.balance",
-        (user_id, guild_id, amount)
-    )
-    db_conn.commit()
-    return masoi_get_coin(user_id, guild_id)
 
 # --- BẢNG KÊNH THÔNG BÁO ---
 db_cursor.execute("""
@@ -598,11 +393,6 @@ BIRTHDAY_GIF_PATH = "hb_gif.gif"
 @bot.event
 async def on_ready():
     print(f"🤖 Bot đã đăng nhập thành công với tên: {bot.user}")
-    if payment_web_runner is None:
-        try:
-            await start_payment_web_server()
-        except Exception as e:
-            print(f"⚠️ Không khởi động được VietQR webhook: {e}")
     if not check_birthdays.is_running():
         check_birthdays.start()
     if not update_stats_loop.is_running():
@@ -2026,7 +1816,7 @@ class QRBankModal(discord.ui.Modal, title="🏦  TẠO QR CHUYỂN KHOẢN"):
     )
     content = discord.ui.TextInput(
         label="📝 Nội dung chuyển khoản",
-        placeholder="Ví dụ: NAP COIN 1234",
+        placeholder="Ví dụ: Thanh toan don hang 1234",
         required=False,
         max_length=50,
     )
@@ -2196,89 +1986,6 @@ async def taoqr(interaction: discord.Interaction):
 
 
 
-@bot.tree.command(name="coin", description="Xem số coin của bạn")
-async def coin_command(interaction: discord.Interaction):
-    balance = masoi_get_coin(interaction.user.id, interaction.guild_id)
-    embed = discord.Embed(
-        title="🪙 VÍ COIN",
-        description=f"### {interaction.user.mention}\n\n**Số dư:** `{balance:,} 🪙`",
-        color=discord.Color.gold()
-    )
-    embed.set_footer(text="Thắng Ma Sói = +100 🪙")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-@bot.tree.command(name="napcoin", description="Tạo đơn nạp coin bằng VietQR và tự động xác minh")
-@discord.app_commands.describe(amount="Số tiền muốn nạp, đơn vị VNĐ")
-async def napcoin_command(interaction: discord.Interaction, amount: int):
-    if interaction.guild is None:
-        await interaction.response.send_message("❌ Lệnh này chỉ dùng trong server.", ephemeral=True)
-        return
-    if not payment_configured():
-        await interaction.response.send_message(
-            "❌ Chưa cấu hình VietQR. Cần PAYMENT_BANK_CODE, PAYMENT_ACCOUNT và PAYMENT_ACCOUNT_NAME.",
-            ephemeral=True
-        )
-        return
-    if amount < 1000:
-        await interaction.response.send_message("❌ Số tiền tối thiểu là 1.000 VNĐ.", ephemeral=True)
-        return
-
-    order_code = make_payment_code()
-    coin_amount = amount * COIN_PER_VND
-    created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    db_cursor.execute(
-        "INSERT INTO payment_orders (order_code, user_id, guild_id, amount_vnd, coin_amount, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (order_code, interaction.user.id, interaction.guild.id, amount, coin_amount, created_at)
-    )
-    db_conn.commit()
-
-    qr_url = (
-        f"https://img.vietqr.io/image/"
-        f"{urllib.parse.quote(PAYMENT_BANK_CODE, safe='')}-"
-        f"{urllib.parse.quote(PAYMENT_ACCOUNT, safe='')}-compact2.png"
-        f"?amount={amount}"
-        f"&addInfo={urllib.parse.quote(order_code, safe='')}"
-        f"&accountName={urllib.parse.quote(PAYMENT_ACCOUNT_NAME, safe='')}"
-    )
-
-    embed = discord.Embed(
-        title="💳 NẠP COIN QUA VIETQR",
-        description=(
-            f"Quét QR và chuyển đúng **{amount:,} VNĐ**.\n\n"
-            f"**Mã thanh toán:** `{order_code}`\n"
-            f"Sau khi tiền vào, bot sẽ tự xác minh và cộng **{coin_amount:,} coin**."
-        ),
-        color=discord.Color.green()
-    )
-    embed.add_field(name="🏦 Ngân hàng", value=PAYMENT_BANK_CODE, inline=True)
-    embed.add_field(name="💰 Số tiền", value=f"{amount:,} VNĐ", inline=True)
-    embed.add_field(name="🪙 Nhận", value=f"{coin_amount:,} coin", inline=True)
-    embed.set_image(url=qr_url)
-    embed.set_footer(text="Không chuyển lại mã của đơn khác • VietQR + SePay")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-@bot.tree.command(name="trangthainap", description="Kiểm tra trạng thái đơn nạp VietQR")
-@discord.app_commands.describe(code="Mã thanh toán, ví dụ BDT1A2B3C4D")
-async def trangthainap_command(interaction: discord.Interaction, code: str):
-    row = db_cursor.execute(
-        "SELECT amount_vnd, coin_amount, status, transaction_id FROM payment_orders WHERE order_code = ? AND user_id = ?",
-        (code.strip().upper(), interaction.user.id)
-    ).fetchone()
-    if not row:
-        await interaction.response.send_message("❌ Không tìm thấy đơn nạp của bạn.", ephemeral=True)
-        return
-    amount_vnd, coin_amount, status, transaction_id = row
-    status_text = "✅ Đã xác minh" if status == "paid" else "⏳ Chờ thanh toán"
-    await interaction.response.send_message(
-        f"**Đơn:** `{code.strip().upper()}`\n"
-        f"**Số tiền:** {amount_vnd:,} VNĐ\n"
-        f"**Coin:** {coin_amount:,}\n"
-        f"**Trạng thái:** {status_text}" + (f"\n**Mã giao dịch:** `{transaction_id}`" if transaction_id else ""),
-        ephemeral=True
-    )
-
 
 # ========================= MA SÓI =========================
 MASOI_ROLE_INFO = {
@@ -2304,9 +2011,6 @@ MASOI_ROLE_EMOJI = {
 }
 
 MASOI_ROOMS = {}
-MASOI_WIN_REWARD = 100
-
-
 def masoi_alive_winner(room):
     """Trả về phe thắng nếu đã đủ điều kiện; None nếu ván chưa kết thúc."""
     roles = room.get("roles", {})
@@ -2322,25 +2026,19 @@ def masoi_alive_winner(room):
 
 
 async def masoi_finish_game(room, winner):
-    if room.get("winner_paid"):
-        return None
-    room["winner_paid"] = True
+    if room.get("game_finished"):
+        return False
+    room["game_finished"] = True
     room["winner"] = winner
-    wolf_roles = {"Sói Thường", "Sói Alpha", "Sói Con", "Sói Sát Thủ"}
-    winners = []
-    for uid in room.get("players", []):
-        role = room.get("roles", {}).get(uid)
-        is_winner = (winner == "Ma Sói" and role in wolf_roles) or (winner == "Dân Làng" and role not in wolf_roles)
-        if not is_winner:
-            continue
-        balance = masoi_add_coin(uid, room.get("guild_id"), MASOI_WIN_REWARD)
-        winners.append((uid, balance))
+
     old_task = room.get("phase_task")
     if old_task and not old_task.done():
         old_task.cancel()
+
     room["started"] = False
     room["phase"] = "finished"
-    return winners
+    return True
+
 
 
 def masoi_roles_for_count(n):
@@ -2413,7 +2111,7 @@ class MasoiCreateModal(discord.ui.Modal, title="🐺 TẠO PHÒNG MA SÓI"):
             "phase": "lobby",
             "actions": {},
             "dead": [],
-            "winner_paid": False,
+            "game_finished": False,
             "winner": None,
         }
         room = MASOI_ROOMS[room_id]
@@ -2546,20 +2244,29 @@ async def masoi_phase_timer(room_id, phase, seconds):
 
         winner = masoi_alive_winner(room)
         if winner:
-            winners = await masoi_finish_game(room, winner)
+            game_finished = await masoi_finish_game(room, winner)
             channel = bot.get_channel(room.get("channel_id"))
-            if channel:
+            if channel and game_finished:
                 emoji = "🐺" if winner == "Ma Sói" else "🏘️"
-                names = []
                 guild = bot.get_guild(room.get("guild_id"))
-                for uid, balance in winners or []:
-                    member = guild.get_member(uid) if guild else None
-                    names.append(f"{member.mention if member else f'<@{uid}>'} (+{MASOI_WIN_REWARD} 🪙)")
+                names = []
+                for uid in room.get("players", []):
+                    role = room.get("roles", {}).get(uid)
+                    wolf_roles = {"Sói Thường", "Sói Alpha", "Sói Con", "Sói Sát Thủ"}
+                    is_winner = (
+                        (winner == "Ma Sói" and role in wolf_roles)
+                        or (winner == "Dân Làng" and role not in wolf_roles)
+                    )
+                    if is_winner:
+                        member = guild.get_member(uid) if guild else None
+                        names.append(member.mention if member else f"<@{uid}>")
+
                 embed = discord.Embed(
                     title=f"🏆 {emoji} PHE {winner.upper()} THẮNG!",
-                    description=(f"### 🎉 Ván Ma Sói đã kết thúc!\n\n"
-                                 f"**Phần thưởng:** `+{MASOI_WIN_REWARD} 🪙` cho mỗi người thắng.\n\n"
-                                 + "\n".join(names[:25])),
+                    description=(
+                        "### 🎉 Ván Ma Sói đã kết thúc!\n\n"
+                        + ("**Người thắng:**\n" + "\n".join(names[:25]) if names else "")
+                    ),
                     color=discord.Color.gold()
                 )
                 await channel.send(embed=embed)
