@@ -267,6 +267,8 @@ BOOST_CONFIG = {
     "gif_path": "boost_gif.gif"
 }
 
+LEVEL_ROLE_MILESTONES = [1, 25, 50, 100, 200]
+
 LEVELUP_CONFIG = {
     "message": "Chúc mừng {member} đã đạt đến **Cấp độ {level} / 300**! 🌟{role_mention}",
     "gif_path": "levelup_gif.gif"
@@ -1044,23 +1046,6 @@ async def update_stats_loop():
                     await channel.edit(name=name)
                 except discord.HTTPException:
                     pass
-
-
-@tasks.loop(minutes=5)
-async def update_stats_loop():
-    for guild in bot.guilds:
-        if guild.id in server_stats_channels:
-            data = server_stats_channels[guild.id]
-            c_total = guild.get_channel(data["total_id"])
-            c_online = guild.get_channel(data["online_id"])
-            c_boost = guild.get_channel(data["boost_id"])
-
-            if c_total:
-                await c_total.edit(name=f"👥 Tổng: {guild.member_count}")
-            if c_online:
-                await c_online.edit(name=f"🟢 Online: {sum(1 for m in guild.members if m.status != discord.Status.offline)}")
-            if c_boost:
-                await c_boost.edit(name=f"💎 Boost: {guild.premium_subscription_count}")
 
 
 @bot.event
