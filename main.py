@@ -9,6 +9,7 @@ import functools
 import json
 import urllib.parse
 import urllib.request
+import random
 from google import genai
 import yt_dlp
 
@@ -41,6 +42,8 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.presences = True
+if hasattr(intents, "polls"):
+    intents.polls = True
 intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -118,6 +121,26 @@ db_cursor.execute("""
 """)
 db_conn.commit()
 
+# --- CẤU HÌNH ROLE TỰ NHẬN ---
+db_cursor.execute("""
+    CREATE TABLE IF NOT EXISTS self_role_config (
+        guild_id INTEGER PRIMARY KEY,
+        role_ids TEXT NOT NULL,
+        message TEXT NOT NULL
+    )
+""")
+db_conn.commit()
+
+db_cursor.execute("""
+    CREATE TABLE IF NOT EXISTS welcome_config (
+        guild_id INTEGER PRIMARY KEY,
+        channel_id INTEGER,
+        message TEXT NOT NULL,
+        gif_path TEXT
+    )
+""")
+db_conn.commit()
+
 voice_keepalive_tasks = {}
 
 # --- HỆ THỐNG PHÁT NHẠC ---
@@ -125,76 +148,160 @@ music_queues = {}
 music_now_playing = {}
 music_locks = {}
 
+YOUTUBE_COOKIES_FILE = os.getenv("YOUTUBE_COOKIES_FILE", "youtube_cookies.txt")
+
 YTDL_OPTIONS = {
-    "format": "bestaudio/best",
+    "format": "bestaudio[acodec=opus]/bestaudio/best",
     "noplaylist": True,
     "quiet": True,
     "no_warnings": True,
-    "default_search": "ytsearch",
+    "default_search": "ytsearch1",
     "source_address": "0.0.0.0",
+    "cachedir": False,
+    "socket_timeout": 20,
+    "retries": 5,
+    "fragment_retries": 5,
+    # Thử các client hiện có trước khi cần cookie/PO token.
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["tv", "web_embedded", "android_vr", "web_safari"]
+        }
+    },
 }
 
+if os.path.exists(YOUTUBE_COOKIES_FILE):
+    YTDL_OPTIONS["cookiefile"] = YOUTUBE_COOKIES_FILE
+
 FFMPEG_OPTIONS = {
-    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-    "options": "-vn",
+    "before_options": (
+        "-reconnect 1 "
+        "-reconnect_streamed 1 "
+        "-reconnect_at_eof 1 "
+        "-reconnect_on_network_error 1 "
+        "-reconnect_delay_max 5"
+    ),
+    "options": "-vn -loglevel warning",
 }
 
 def get_music_queue(guild_id: int):
     return music_queues.setdefault(guild_id, [])
 
+
 async def spotify_to_youtube_query(spotify_url: str):
     def _get():
-        api = "https://open.spotify.com/oembed?url=" + urllib.parse.quote(spotify_url, safe="")
-        req = urllib.request.Request(api, headers={"User-Agent": "Mozilla/5.0"})
+        api = (
+            "https://open.spotify.com/oembed?url="
+            + urllib.parse.quote(spotify_url, safe="")
+        )
+        req = urllib.request.Request(
+            api,
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+
         title = data.get("title", "").strip()
         author = data.get("author_name", "").strip()
+
         if not title:
             raise ValueError("Không đọc được thông tin bài hát Spotify")
+
         return f"ytsearch1:{author} - {title}" if author else f"ytsearch1:{title}"
+
     return await asyncio.get_running_loop().run_in_executor(None, _get)
+
 
 async def extract_audio(query: str):
     if "open.spotify.com/" in query.lower():
         query = await spotify_to_youtube_query(query)
+
     loop = asyncio.get_running_loop()
+
     def _extract():
-        with yt_dlp.YoutubeDL(YTDL_OPTIONS) as ydl:
-            info = ydl.extract_info(query, download=False)
-            if "entries" in info:
-                entries = [e for e in info["entries"] if e]
-                if not entries: raise ValueError("Không tìm thấy bài nhạc")
-                info = entries[0]
-            return {"title": info.get("title", "Không rõ tên"), "url": info["url"], "webpage_url": info.get("webpage_url", query)}
+        last_error = None
+
+        # Một số IP/server bị YouTube chặn ở client mặc định.
+        # Thử từng client để tăng khả năng lấy được audio.
+        client_sets = [
+            ["tv", "web_embedded", "android_vr"],
+            ["web_safari"],
+        ]
+
+        for clients in client_sets:
+            options = dict(YTDL_OPTIONS)
+            options["extractor_args"] = {
+                "youtube": {"player_client": clients}
+            }
+
+            try:
+                with yt_dlp.YoutubeDL(options) as ydl:
+                    info = ydl.extract_info(query, download=False)
+
+                    if "entries" in info:
+                        entries = [e for e in info["entries"] if e]
+                        if not entries:
+                            raise ValueError("Không tìm thấy bài nhạc")
+                        info = entries[0]
+
+                    audio_url = info.get("url")
+                    if not audio_url:
+                        raise ValueError("Không lấy được link audio")
+
+                    return {
+                        "title": info.get("title", "Không rõ tên"),
+                        "url": audio_url,
+                        "webpage_url": info.get("webpage_url", query),
+                        "http_headers": info.get("http_headers", {})
+                    }
+            except Exception as e:
+                last_error = e
+
+        raise last_error or RuntimeError("Không thể lấy audio từ YouTube")
+
     return await loop.run_in_executor(None, _extract)
+
 
 async def play_next(guild: discord.Guild):
     queue = get_music_queue(guild.id)
     voice = guild.voice_client
+
     if not voice or not voice.is_connected() or not queue:
         music_now_playing.pop(guild.id, None)
         return
 
-    track = queue.pop(0)
-    music_now_playing[guild.id] = track
-
-    def after_play(error):
-        if error:
-            print(f"⚠️ Lỗi phát nhạc guild {guild.id}: {error}")
-        fut = asyncio.run_coroutine_threadsafe(play_next(guild), bot.loop)
-        try:
-            fut.result()
-        except Exception as e:
-            print(f"⚠️ Không thể phát bài tiếp theo: {e}")
+    track_request = queue.pop(0)
 
     try:
-        source = discord.FFmpegPCMAudio(track["url"], **FFMPEG_OPTIONS)
+        # Lấy stream mới ngay trước khi phát để tránh URL YouTube hết hạn.
+        track = await extract_audio(track_request["query"])
+        music_now_playing[guild.id] = track
+
+        source = discord.FFmpegPCMAudio(
+            track["url"],
+            **FFMPEG_OPTIONS
+        )
+
+        def after_play(error):
+            if error:
+                print(f"⚠️ Lỗi phát nhạc guild {guild.id}: {error}")
+
+            fut = asyncio.run_coroutine_threadsafe(
+                play_next(guild),
+                bot.loop
+            )
+            try:
+                fut.result()
+            except Exception as e:
+                print(f"⚠️ Không thể phát bài tiếp theo: {e}")
+
         voice.play(source, after=after_play)
+
     except Exception as e:
         music_now_playing.pop(guild.id, None)
-        print(f"⚠️ Không thể phát nhạc: {e}")
+        print(f"⚠️ Không thể phát `{track_request['query']}`: {e}")
         await play_next(guild)
+
+
 
 
 async def keep_voice_connected(guild_id: int, channel_id: int):
@@ -276,6 +383,7 @@ LEVELUP_CONFIG = {
 
 SPECIAL_ADMIN_ID = 1180179460339810314
 FOOTER_AUTHOR = "by ph.huyy"
+SELF_ROLE_PING_ID = 1515041455805304953
 BIRTHDAY_GIF_PATH = "hb_gif.gif" 
 
 @bot.event
@@ -493,53 +601,6 @@ async def configlevelrole(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
-class PollView(discord.ui.View):
-    def __init__(self, poll_message_id: int, options: list[str]):
-        super().__init__(timeout=None)
-        self.poll_message_id = poll_message_id
-        self.options = options
-        button_styles = [discord.ButtonStyle.primary, discord.ButtonStyle.success,
-                          discord.ButtonStyle.secondary, discord.ButtonStyle.danger,
-                          discord.ButtonStyle.primary]
-        for i, option in enumerate(options):
-            button = discord.ui.Button(
-                label=option[:80],
-                style=button_styles[i],
-                custom_id=f"poll:{poll_message_id}:{i}"
-            )
-            button.callback = self.make_callback(i)
-            self.add_item(button)
-
-    def make_callback(self, index: int):
-        async def callback(interaction: discord.Interaction):
-            channel = interaction.channel
-            if not channel:
-                await interaction.response.send_message("❌ Không tìm thấy kênh bình chọn.", ephemeral=True)
-                return
-            try:
-                message = await channel.fetch_message(self.poll_message_id)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-                await interaction.response.send_message("❌ Không tìm thấy bảng bình chọn.", ephemeral=True)
-                return
-
-            # Mỗi người chỉ được chọn 1 đáp án.
-            user_id = interaction.user.id
-            for reaction in message.reactions:
-                try:
-                    users = [u async for u in reaction.users()]
-                    if any(u.id == user_id for u in users):
-                        await reaction.remove(interaction.user)
-                except (discord.Forbidden, discord.HTTPException):
-                    pass
-
-            emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-            await message.add_reaction(emojis[index])
-            await interaction.response.send_message(
-                f"✅ Đã bình chọn **{self.options[index]}**!", ephemeral=True
-            )
-        return callback
-
-
 class PollModal(discord.ui.Modal, title="🗳️ Tạo bảng bình chọn"):
     question = discord.ui.TextInput(
         label="Câu hỏi",
@@ -577,119 +638,251 @@ class PollModal(discord.ui.Modal, title="🗳️ Tạo bảng bình chọn"):
         self.channel = channel
 
     async def on_submit(self, interaction: discord.Interaction):
-        options = [str(x).strip() for x in [self.option1.value, self.option2.value, self.option3.value, self.option4.value] if str(x).strip()]
-        if len(options) < 2:
-            await interaction.response.send_message("❌ Cần ít nhất 2 lựa chọn!", ephemeral=True)
+        if not hasattr(discord, "Poll"):
+            await interaction.response.send_message(
+                "❌ Bot đang dùng discord.py quá cũ. Hãy cập nhật: `pip install -U discord.py`",
+                ephemeral=True
+            )
             return
 
-        embed = discord.Embed(
-            title="🗳️  BÌNH CHỌN",
-            description=(
-                f"## {self.question.value}\n\n"
-                "👇 **Bấm vào một ô bên dưới để bình chọn!**\n"
-                "🔒 *Mỗi người chỉ được chọn 1 phương án.*"
-            ),
-            color=discord.Color.blurple()
-        )
-        embed.add_field(
-            name="📌 Các lựa chọn",
-            value="\n".join(f"**{i+1}.** {opt}" for i, opt in enumerate(options)),
-            inline=False
-        )
-        embed.set_footer(text=f"Tạo bởi {interaction.user.display_name} • {FOOTER_AUTHOR}")
-        embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
+        options = [
+            str(x).strip()
+            for x in [
+                self.option1.value,
+                self.option2.value,
+                self.option3.value,
+                self.option4.value
+            ]
+            if str(x).strip()
+        ]
 
-        poll_message = await self.channel.send(embed=embed)
-        view = PollView(poll_message.id, options)
-        await poll_message.edit(view=view)
+        if len(options) < 2:
+            await interaction.response.send_message(
+                "❌ Cần ít nhất 2 lựa chọn!",
+                ephemeral=True
+            )
+            return
 
-        db_cursor.execute(
-            "INSERT INTO polls (message_id, guild_id, channel_id, question, options, created_by) VALUES (?, ?, ?, ?, ?, ?)",
-            (poll_message.id, interaction.guild.id, self.channel.id, self.question.value, "\n".join(options), interaction.user.id)
-        )
-        db_conn.commit()
-
-        await interaction.response.send_message(
-            f"✅ Đã tạo bảng bình chọn tại {self.channel.mention}!", ephemeral=True
+        poll = discord.Poll(
+            question=self.question.value.strip(),
+            duration=datetime.timedelta(days=7),
+            allow_multiselect=False
         )
 
+        for option in options[:10]:
+            poll.add_answer(text=option)
 
-@bot.tree.command(name="binhchon", description="Mở form tạo bảng bình chọn (Admin)")
+        try:
+            await interaction.response.send_message(poll=poll)
+            poll_message = await interaction.original_response()
+
+            db_cursor.execute(
+                """
+                INSERT OR REPLACE INTO polls
+                (message_id, guild_id, channel_id, question, options, created_by)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    poll_message.id,
+                    interaction.guild.id,
+                    self.channel.id,
+                    self.question.value.strip(),
+                    "\n".join(options),
+                    interaction.user.id
+                )
+            )
+            db_conn.commit()
+
+        except discord.HTTPException as e:
+            print(f"⚠️ Không thể tạo poll native: {e}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "❌ Không thể tạo bảng bình chọn. Kiểm tra phiên bản discord.py và quyền của bot.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    "❌ Không thể lưu bảng bình chọn.",
+                    ephemeral=True
+                )
+
+
+@bot.tree.command(name="binhchon", description="Tạo bảng bình chọn Discord native (Admin)")
 @discord.app_commands.checks.has_permissions(administrator=True)
 async def binhchon(interaction: discord.Interaction):
     if not isinstance(interaction.channel, discord.TextChannel):
-        await interaction.response.send_message("❌ Lệnh này chỉ dùng được trong kênh text!", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ Lệnh này chỉ dùng được trong kênh text!",
+            ephemeral=True
+        )
         return
+
+    if not hasattr(discord, "Poll"):
+        await interaction.response.send_message(
+            "❌ Bot cần **discord.py 2.4+** để tạo poll native.\n"
+            "Cập nhật bằng: `pip install -U discord.py`",
+            ephemeral=True
+        )
+        return
+
     await interaction.response.send_modal(PollModal(interaction.channel))
 
 
-@bot.tree.command(name="xembinhchon", description="Xem kết quả bình chọn (Admin)")
+@bot.tree.command(name="xembinhchon", description="Xem kết quả bảng bình chọn (Admin)")
 @discord.app_commands.describe(message_id="ID tin nhắn của bảng bình chọn")
 @discord.app_commands.checks.has_permissions(administrator=True)
 async def xembinhchon(interaction: discord.Interaction, message_id: str):
     try:
         poll_id = int(message_id)
     except ValueError:
-        await interaction.response.send_message("❌ Message ID không hợp lệ!", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ Message ID không hợp lệ!",
+            ephemeral=True
+        )
         return
 
-    db_cursor.execute("SELECT channel_id, options, question FROM polls WHERE message_id = ? AND guild_id = ?", (poll_id, interaction.guild.id))
-    row = db_cursor.fetchone()
-    if not row:
-        await interaction.response.send_message("❌ Không tìm thấy bảng bình chọn này.", ephemeral=True)
-        return
-
-    channel = interaction.guild.get_channel(row[0])
+    channel = interaction.channel
     if not channel:
-        await interaction.response.send_message("❌ Không tìm thấy kênh chứa bảng bình chọn.", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ Không tìm thấy kênh!",
+            ephemeral=True
+        )
         return
 
     try:
         poll_message = await channel.fetch_message(poll_id)
-    except (discord.NotFound, discord.Forbidden):
-        await interaction.response.send_message("❌ Không thể lấy tin nhắn bình chọn.", ephemeral=True)
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        await interaction.response.send_message(
+            "❌ Không thể lấy tin nhắn bảng bình chọn.",
+            ephemeral=True
+        )
         return
 
-    options = row[1].split("\n")
-    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-    lines = []
-    total = 0
-    counts = []
-    for i, option in enumerate(options):
-        count = 0
-        for reaction in poll_message.reactions:
-            if str(reaction.emoji) == emojis[i]:
-                count = max(reaction.count - 1, 0)
-                break
-        counts.append(count)
-        total += count
+    poll = getattr(poll_message, "poll", None)
+    if poll is None:
+        await interaction.response.send_message(
+            "❌ Tin nhắn này không phải Discord native poll.",
+            ephemeral=True
+        )
+        return
 
-    for i, option in enumerate(options):
-        percent = (counts[i] / total * 100) if total else 0
-        bar = "🟦" * min(10, round(percent / 10)) + "⬜" * max(0, 10 - round(percent / 10))
-        lines.append(f"**{i+1}. {option}**\n{bar} **{counts[i]} vote** ({percent:.0f}%)")
+    total = sum(max(getattr(answer, "vote_count", 0), 0) for answer in poll.answers)
+    lines = []
+
+    for answer in poll.answers:
+        count = max(getattr(answer, "vote_count", 0), 0)
+        percent = (count / total * 100) if total else 0
+        bar_count = min(10, round(percent / 10))
+        bar = "🟦" * bar_count + "⬜" * (10 - bar_count)
+        text_value = getattr(getattr(answer, "media", None), "text", None) or str(answer)
+        lines.append(
+            f"**{text_value}**\n{bar} **{count} vote** ({percent:.0f}%)"
+        )
+
+    question_text = getattr(getattr(poll, "question", None), "text", "Bình chọn")
 
     embed = discord.Embed(
-        title="📊  KẾT QUẢ BÌNH CHỌN",
-        description=f"## {row[2]}\n\n" + "\n\n".join(lines),
+        title="📊 KẾT QUẢ BÌNH CHỌN",
+        description=f"## {question_text}\n\n" + "\n\n".join(lines),
         color=discord.Color.green()
     )
     embed.set_footer(text=f"Tổng số lượt vote: {total}")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@bot.tree.command(name="setwelcome", description="Cài đặt welcome và GIF nhỏ (Admin)")
-@discord.app_commands.describe(message="Nội dung", channel="Kênh", gif_file="File GIF")
+class WelcomeConfigModal(discord.ui.Modal, title="👋 Cài đặt Welcome"):
+    channel_id = discord.ui.TextInput(
+        label="ID kênh Welcome",
+        placeholder="Ví dụ: 123456789012345678",
+        required=True,
+        max_length=25
+    )
+    message = discord.ui.TextInput(
+        label="Nội dung Welcome",
+        placeholder="Chào mừng {member} đến {server}! Bạn là thành viên thứ {number}.",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=2000
+    )
+    gif_path = discord.ui.TextInput(
+        label="Tên file GIF (tuỳ chọn)",
+        placeholder="welcome_gif.gif",
+        required=False,
+        max_length=200
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            channel_id = int(self.channel_id.value.strip())
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ Channel ID phải là số hợp lệ.",
+                ephemeral=True
+            )
+            return
+
+        channel = interaction.guild.get_channel(channel_id)
+        if not isinstance(channel, discord.TextChannel):
+            await interaction.response.send_message(
+                f"❌ Không tìm thấy kênh text có ID `{channel_id}`.",
+                ephemeral=True
+            )
+            return
+
+        gif_path = self.gif_path.value.strip() or None
+
+        db_cursor.execute(
+            """
+            INSERT INTO welcome_config (guild_id, channel_id, message, gif_path)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(guild_id) DO UPDATE SET
+                channel_id = excluded.channel_id,
+                message = excluded.message,
+                gif_path = excluded.gif_path
+            """,
+            (
+                interaction.guild.id,
+                channel.id,
+                self.message.value.strip(),
+                gif_path
+            )
+        )
+        db_conn.commit()
+
+        WELCOME_CONFIG["channel_id"] = channel.id
+        WELCOME_CONFIG["message"] = self.message.value.strip()
+        WELCOME_CONFIG["gif_path"] = gif_path or "welcome_gif.gif"
+
+        await interaction.response.send_message(
+            f"✅ Đã cài Welcome!\n"
+            f"📢 Kênh: {channel.mention}\n"
+            f"🎞️ GIF: `{gif_path or 'welcome_gif.gif'}`",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(
+    name="setwelcome",
+    description="Mở bảng Modal cài đặt Welcome (Admin)"
+)
 @discord.app_commands.checks.has_permissions(administrator=True)
-async def setwelcome(interaction: discord.Interaction, message: str, channel: discord.TextChannel, gif_file: discord.Attachment = None):
-    WELCOME_CONFIG["channel_id"] = channel.id
-    WELCOME_CONFIG["message"] = message
+async def setwelcome(interaction: discord.Interaction):
+    # Nạp cấu hình hiện tại nếu có để mở form dễ chỉnh sửa.
+    db_cursor.execute(
+        "SELECT channel_id, message, gif_path FROM welcome_config WHERE guild_id = ?",
+        (interaction.guild.id,)
+    )
+    row = db_cursor.fetchone()
 
-    if gif_file:
-        await gif_file.save("welcome_gif.gif")
-        WELCOME_CONFIG["gif_path"] = "welcome_gif.gif"
+    modal = WelcomeConfigModal()
 
-    await interaction.response.send_message("✅ Đã cập nhật cấu hình Welcome!", ephemeral=True)
+    if row:
+        channel_id, message, gif_path = row
+        modal.channel_id.default = str(channel_id)
+        modal.message.default = message
+        modal.gif_path.default = gif_path or ""
+
+    await interaction.response.send_modal(modal)
 
 
 @bot.tree.command(name="setboost", description="Cài đặt thông báo Boost (Admin)")
@@ -853,30 +1046,45 @@ async def play(ctx, *, query: str):
         return
 
     voice = ctx.guild.voice_client
+
     if not voice or not voice.is_connected():
         if not getattr(ctx.author, "voice", None) or not ctx.author.voice:
-            await ctx.send("❌ Bạn phải vào voice trước để bot biết kênh cần vào.")
+            await ctx.send(
+                "❌ Bạn phải vào voice trước để bot biết kênh cần vào."
+            )
             return
+
         try:
-            voice = await ctx.author.voice.channel.connect(reconnect=True, timeout=30)
+            voice = await ctx.author.voice.channel.connect(
+                reconnect=True,
+                timeout=30
+            )
         except Exception as e:
             await ctx.send(f"❌ Không thể vào voice: `{e}`")
             return
 
-    try:
-        track = await extract_audio(query)
-    except Exception as e:
-        await ctx.send(f"❌ Không tìm được bài nhạc: `{e}`")
+    queue = get_music_queue(ctx.guild.id)
+    queue.append({"query": query.strip()})
+
+    if voice.is_playing() or voice.is_paused():
+        await ctx.send(
+            f"➕ Đã thêm vào hàng chờ: **{query.strip()}** "
+            f"(vị trí {len(queue)})"
+        )
         return
 
-    queue = get_music_queue(ctx.guild.id)
-    queue.append(track)
+    await play_next(ctx.guild)
 
-    if not voice.is_playing() and not voice.is_paused():
-        await play_next(ctx.guild)
-        await ctx.send(f"🎵 Đang phát: **{track['title']}**")
+    current = music_now_playing.get(ctx.guild.id)
+    if current:
+        await ctx.send(f"🎵 Đang phát: **{current['title']}**")
     else:
-        await ctx.send(f"➕ Đã thêm vào hàng chờ: **{track['title']}** (vị trí {len(queue)})")
+        await ctx.send(
+            f"❌ Không thể phát: **{query.strip()}**.\n"
+            "YouTube đang chặn IP của máy chạy bot. "
+            "Đặt file `youtube_cookies.txt` cạnh `main.py` hoặc cấu hình "
+            "`YOUTUBE_COOKIES_FILE` trỏ tới file cookies, rồi khởi động lại bot."
+        )
 
 
 @bot.command(name="skip")
@@ -913,12 +1121,16 @@ async def resume(ctx):
 async def stop(ctx):
     if not ctx.guild:
         return
+
     queue = get_music_queue(ctx.guild.id)
     queue.clear()
     music_now_playing.pop(ctx.guild.id, None)
+
     voice = ctx.guild.voice_client
-    if voice and voice.is_playing():
-        voice.stop()
+    if voice:
+        if voice.is_playing() or voice.is_paused():
+            voice.stop()
+
     await ctx.send("⏹️ Đã dừng nhạc và xoá hàng chờ.")
 
 
@@ -963,6 +1175,234 @@ async def mute(ctx, member: discord.Member, minutes: int, *, reason="Không có 
 async def unmute(ctx, member: discord.Member, *, reason="Không có lý do"):
     await member.timeout(None, reason=reason)
     await ctx.send(f"🔊 Đã unmute **{member.mention}**.")
+
+@bot.tree.command(
+    name="setnhanrole",
+    description="Cài nhiều Role tự nhận và nội dung thông báo (Admin)"
+)
+@discord.app_commands.describe(
+    role_ids="Nhiều ID Role, ngăn cách bằng dấu phẩy. Ví dụ: 111,222,333",
+    message="Nội dung thông báo. Dùng {member}, {role}, {server}"
+)
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setnhanrole(
+    interaction: discord.Interaction,
+    role_ids: str,
+    message: str = "✅ {member} đã nhận Role {role}!"
+):
+    try:
+        parsed_ids = [
+            int(x.strip())
+            for x in role_ids.replace(" ", "").split(",")
+            if x.strip()
+        ]
+    except ValueError:
+        await interaction.response.send_message(
+            "❌ Danh sách Role ID không hợp lệ. Ví dụ: `123,456,789`",
+            ephemeral=True
+        )
+        return
+
+    parsed_ids = list(dict.fromkeys(parsed_ids))
+    if not parsed_ids or len(parsed_ids) > 10:
+        await interaction.response.send_message(
+            "❌ Hãy nhập từ 1 đến 10 Role ID.",
+            ephemeral=True
+        )
+        return
+
+    roles = []
+    me = interaction.guild.me or interaction.guild.get_member(bot.user.id)
+
+    if me is None:
+        await interaction.response.send_message(
+            "❌ Không xác định được quyền của bot.",
+            ephemeral=True
+        )
+        return
+
+    for role_id in parsed_ids:
+        role = interaction.guild.get_role(role_id)
+
+        if not role:
+            await interaction.response.send_message(
+                f"❌ Không tìm thấy Role có ID `{role_id}`.",
+                ephemeral=True
+            )
+            return
+
+        if role.is_default() or role.managed:
+            await interaction.response.send_message(
+                f"❌ Role `{role.name}` không thể dùng làm Role tự nhận.",
+                ephemeral=True
+            )
+            return
+
+        if role >= me.top_role:
+            await interaction.response.send_message(
+                f"❌ Role {role.mention} phải thấp hơn Role cao nhất của bot.",
+                ephemeral=True
+            )
+            return
+
+        roles.append(role)
+
+    role_ids_text = ",".join(str(role.id) for role in roles)
+
+    # DB cũ có thể vẫn còn cột channel_id; không cần sử dụng cột đó nữa.
+    db_cursor.execute(
+        """
+        INSERT INTO self_role_config (guild_id, role_ids, message)
+        VALUES (?, ?, ?)
+        ON CONFLICT(guild_id) DO UPDATE SET
+            role_ids = excluded.role_ids,
+            message = excluded.message
+        """,
+        (interaction.guild.id, role_ids_text, message)
+    )
+    db_conn.commit()
+
+    role_text = ", ".join(role.mention for role in roles)
+
+    await interaction.response.send_message(
+        f"✅ Đã cài {len(roles)} Role tự nhận: {role_text}\n"
+        f"📝 Nội dung: {message}\n"
+        f"📢 Khi có người nhận Role, bot sẽ thông báo tại kênh đang dùng `/nhanrole`.",
+        ephemeral=True
+    )
+
+
+@bot.tree.command(
+    name="nhanrole",
+    description="Nhận các Role tự nhận đã được Admin cài"
+)
+async def nhanrole(interaction: discord.Interaction):
+    guild = interaction.guild
+
+    if guild is None:
+        await interaction.response.send_message(
+            "❌ Lệnh này chỉ dùng trong server.",
+            ephemeral=True
+        )
+        return
+
+    db_cursor.execute(
+        "SELECT role_ids, message FROM self_role_config WHERE guild_id = ?",
+        (guild.id,)
+    )
+    config = db_cursor.fetchone()
+
+    if not config:
+        await interaction.response.send_message(
+            "❌ Server chưa cài Role tự nhận. Admin dùng `/setnhanrole` trước.",
+            ephemeral=True
+        )
+        return
+
+    role_ids_text, message = config
+
+    try:
+        role_ids = [
+            int(x.strip())
+            for x in str(role_ids_text).split(",")
+            if x.strip()
+        ]
+    except ValueError:
+        await interaction.response.send_message(
+            "❌ Cấu hình Role tự nhận bị lỗi. Admin hãy chạy lại `/setnhanrole`.",
+            ephemeral=True
+        )
+        return
+
+    me = guild.me or guild.get_member(bot.user.id)
+    if me is None:
+        await interaction.response.send_message(
+            "❌ Không xác định được quyền của bot.",
+            ephemeral=True
+        )
+        return
+
+    roles = [
+        guild.get_role(role_id)
+        for role_id in role_ids
+    ]
+    roles = [
+        role for role in roles
+        if role and not role.managed and not role.is_default()
+    ]
+
+    addable_roles = [
+        role for role in roles
+        if role < me.top_role
+    ]
+
+    if not addable_roles:
+        await interaction.response.send_message(
+            "❌ Không có Role nào mà bot có thể cấp.",
+            ephemeral=True
+        )
+        return
+
+    to_add = [
+        role for role in addable_roles
+        if role not in interaction.user.roles
+    ]
+
+    if not to_add:
+        await interaction.response.send_message(
+            "ℹ️ Bạn đã có toàn bộ Role tự nhận rồi.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        await interaction.user.add_roles(
+            *to_add,
+            reason=f"Tự nhận Role bằng /nhanrole bởi {interaction.user}"
+        )
+
+        gained_text = ", ".join(role.mention for role in to_add)
+
+        formatted_message = message.format(
+            member=interaction.user.mention,
+            role=gained_text,
+            server=guild.name
+        )
+
+        # Trả kết quả cho người nhận.
+        await interaction.response.send_message(
+            formatted_message,
+            ephemeral=True
+        )
+
+        # Thông báo ngay trong kênh mà người dùng vừa dùng /nhanrole.
+        public_message = (
+            f"<@&1515041455805304953>\n"
+            f"{formatted_message}"
+        )
+
+        try:
+            await interaction.channel.send(
+                content=public_message,
+                allowed_mentions=discord.AllowedMentions(
+                    roles=True,
+                    users=True
+                )
+            )
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ Bot không có quyền cấp một hoặc nhiều Role.",
+            ephemeral=True
+        )
+    except discord.HTTPException as e:
+        await interaction.response.send_message(
+            f"❌ Không thể nhận Role: `{e}`",
+            ephemeral=True
+        )
+
 
 @bot.command(name="afk")
 async def afk(ctx, *, reason="Bận"):
@@ -1050,19 +1490,57 @@ async def update_stats_loop():
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    if WELCOME_CONFIG["channel_id"]:
-        channel = member.guild.get_channel(WELCOME_CONFIG["channel_id"])
-        if channel:
-            msg = WELCOME_CONFIG["message"].format(member=member.mention, name=member.display_name, number=member.guild.member_count, server=member.guild.name)
-            embed = discord.Embed(description=msg, color=discord.Color.blurple())
-            embed.set_footer(text=FOOTER_AUTHOR)
-            
-            if os.path.exists(WELCOME_CONFIG["gif_path"]):
-                file = discord.File(WELCOME_CONFIG["gif_path"], filename="welcome_gif.gif")
-                embed.set_thumbnail(url="attachment://welcome_gif.gif")
-                await channel.send(embed=embed, file=file)
-            else:
-                await channel.send(embed=embed)
+    db_cursor.execute(
+        "SELECT channel_id, message, gif_path FROM welcome_config WHERE guild_id = ?",
+        (member.guild.id,)
+    )
+    row = db_cursor.fetchone()
+
+    if row:
+        channel_id, message_template, gif_path = row
+        channel = member.guild.get_channel(channel_id)
+    else:
+        channel = member.guild.get_channel(WELCOME_CONFIG.get("channel_id"))
+        message_template = WELCOME_CONFIG.get("message", "")
+        gif_path = WELCOME_CONFIG.get("gif_path", "welcome_gif.gif")
+
+    if not channel or not isinstance(channel, discord.TextChannel):
+        return
+
+    try:
+        msg = message_template.format(
+            member=member.mention,
+            name=member.display_name,
+            number=member.guild.member_count,
+            server=member.guild.name
+        )
+    except (KeyError, ValueError):
+        msg = message_template
+
+    embed = discord.Embed(
+        title="👋 CHÀO MỪNG THÀNH VIÊN MỚI",
+        description=msg,
+        color=discord.Color.blurple()
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.set_footer(text=FOOTER_AUTHOR)
+    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
+
+    if gif_path and os.path.exists(gif_path):
+        file = discord.File(gif_path, filename=os.path.basename(gif_path))
+        embed.set_image(url=f"attachment://{os.path.basename(gif_path)}")
+        await channel.send(
+            content=member.mention,
+            embed=embed,
+            file=file,
+            allowed_mentions=discord.AllowedMentions(users=True)
+        )
+    else:
+        await channel.send(
+            content=member.mention,
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(users=True)
+        )
 
 
 @bot.event
@@ -1431,6 +1909,570 @@ async def taoqr(interaction: discord.Interaction):
         ephemeral=True
     )
 
+
+
+# ========================= MA SÓI =========================
+MASOI_ROLE_INFO = {
+    "Dân Làng": ("🏘️ Phe Dân Làng", "Không có kỹ năng đặc biệt. Ban ngày thảo luận và bỏ phiếu tìm Ma Sói."),
+    "Tiên Tri": ("🔮 Phe Dân Làng", "Mỗi đêm soi 1 người để biết người đó có phải Ma Sói hay không."),
+    "Phù Thủy": ("🧙 Phe Dân Làng", "Có 1 thuốc cứu và 1 thuốc độc. Mỗi loại chỉ dùng một lần trong ván."),
+    "Bảo Vệ": ("🛡️ Phe Dân Làng", "Mỗi đêm bảo vệ 1 người khỏi bị Ma Sói cắn; tùy luật có thể bảo vệ chính mình."),
+    "Thợ Săn": ("🏹 Phe Dân Làng", "Khi chết có thể chọn 1 người để bắn chết."),
+    "Cupid": ("💘 Phe Dân Làng", "Đầu game ghép 2 người thành một cặp tình yêu; một người chết thì người còn lại chết theo."),
+    "Trưởng Làng": ("👴 Phe Dân Làng", "Phiếu bầu có trọng số cao hơn theo luật của phòng."),
+    "Thám Tử": ("🕵️ Phe Dân Làng", "Mỗi đêm điều tra để thu thập thông tin về người chơi."),
+    "Sói Thường": ("🐺 Phe Ma Sói", "Mỗi đêm cùng phe Ma Sói chọn 1 người để cắn."),
+    "Sói Alpha": ("👑 Phe Ma Sói", "Ma Sói đặc biệt; tham gia chọn mục tiêu cùng phe Sói."),
+    "Sói Con": ("🐺 Phe Ma Sói", "Ma Sói đặc biệt; khi bị loại có thể tạo lợi thế cho phe Sói theo luật phòng."),
+    "Sói Sát Thủ": ("🔪 Phe Ma Sói", "Ma Sói đặc biệt có khả năng hạ mục tiêu theo luật phòng."),
+    "Kẻ Khờ": ("🤡 Phe Đặc Biệt", "Nếu bị dân làng bỏ phiếu loại, có thể thắng riêng tùy luật phòng."),
+}
+
+MASOI_ROLE_EMOJI = {
+    "Dân Làng":"🏘️", "Tiên Tri":"🔮", "Phù Thủy":"🧙", "Bảo Vệ":"🛡️",
+    "Thợ Săn":"🏹", "Cupid":"💘", "Trưởng Làng":"👴", "Thám Tử":"🕵️",
+    "Sói Thường":"🐺", "Sói Alpha":"👑", "Sói Con":"🐺", "Sói Sát Thủ":"🔪", "Kẻ Khờ":"🤡"
+}
+
+MASOI_ROOMS = {}
+
+
+def masoi_roles_for_count(n):
+    # Luôn có dân làng và đủ sói để game 6-25 người chơi được.
+    wolf_count = 2 if n <= 8 else 3 if n <= 12 else 4 if n <= 16 else 5 if n <= 20 else 6
+    special = []
+    if n >= 6: special += ["Tiên Tri", "Bảo Vệ"]
+    if n >= 8: special += ["Phù Thủy"]
+    if n >= 10: special += ["Thợ Săn", "Cupid"]
+    if n >= 13: special += ["Thám Tử", "Trưởng Làng"]
+    if n >= 16: special += ["Sói Alpha"]
+    if n >= 19: special += ["Sói Con"]
+    if n >= 22: special += ["Sói Sát Thủ", "Kẻ Khờ"]
+    wolves = ["Sói Thường"] * wolf_count
+    if "Sói Alpha" in special:
+        wolves[0] = "Sói Alpha"
+        special.remove("Sói Alpha")
+    if "Sói Con" in special:
+        wolves[1 if len(wolves) > 1 else 0] = "Sói Con"
+        special.remove("Sói Con")
+    if "Sói Sát Thủ" in special:
+        wolves[2 if len(wolves) > 2 else 0] = "Sói Sát Thủ"
+        special.remove("Sói Sát Thủ")
+    roles = wolves + special
+    while len(roles) < n:
+        roles.append("Dân Làng")
+    return roles[:n]
+
+
+class MasoiCreateModal(discord.ui.Modal, title="🐺 TẠO PHÒNG MA SÓI"):
+    room_name = discord.ui.TextInput(
+        label="Tên phòng",
+        placeholder="Ví dụ: Ma Sói Cuối Tuần",
+        max_length=60,
+        required=True
+    )
+    max_players = discord.ui.TextInput(
+        label="Số người tối đa (6-25)",
+        placeholder="Ví dụ: 15",
+        max_length=2,
+        required=True
+    )
+    password = discord.ui.TextInput(
+        label="Mật khẩu phòng (không bắt buộc)",
+        placeholder="Để trống nếu không cần",
+        max_length=30,
+        required=False
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            max_players = int(self.max_players.value.strip())
+        except ValueError:
+            return await interaction.response.send_message("❌ Số người phải là số từ **6 đến 25**.", ephemeral=True)
+        if not 6 <= max_players <= 25:
+            return await interaction.response.send_message("❌ Số người tối đa phải từ **6 đến 25**.", ephemeral=True)
+
+        room_id = f"{interaction.guild_id}_{interaction.channel_id}_{interaction.id}"
+        MASOI_ROOMS[room_id] = {
+            "guild_id": interaction.guild_id,
+            "channel_id": interaction.channel_id,
+            "host": interaction.user.id,
+            "players": [interaction.user.id],
+            "started": False,
+            "roles": {},
+            "room_name": self.room_name.value.strip(),
+            "max_players": max_players,
+            "password": self.password.value.strip() or None,
+            "chat_locked": False,
+            "phase": "lobby",
+            "actions": {},
+            "dead": [],
+        }
+        room = MASOI_ROOMS[room_id]
+        embed = masoi_lobby_embed(room)
+        embed.title = f"🐺 {room['room_name'].upper()}"
+        embed.set_author(name=f"Phòng Ma Sói • {interaction.user.display_name}")
+        await interaction.response.send_message(embed=embed, view=MasoiJoinView(room_id))
+
+
+async def masoi_set_chat_lock(room, locked: bool):
+    guild = bot.get_guild(room["guild_id"])
+    channel = guild.get_channel(room["channel_id"]) if guild else None
+    if not channel:
+        return False, "Không tìm thấy kênh phòng."
+
+    failed = []
+    for uid in room["players"]:
+        member = guild.get_member(uid)
+        if not member:
+            continue
+        try:
+            await channel.set_permissions(
+                member,
+                send_messages=False if locked else None,
+                add_reactions=False if locked else None,
+                reason="Ma Sói: khóa/mở chat người chơi"
+            )
+        except discord.Forbidden:
+            failed.append(member.display_name)
+
+    room["chat_locked"] = locked
+    if failed:
+        return False, "Bot thiếu quyền quản lý quyền kênh hoặc không thể cập nhật: " + ", ".join(failed[:5])
+    return True, None
+
+
+def masoi_phase_embed(phase, seconds_left=None):
+    if phase == "day":
+        title = "☀️  BAN NGÀY  •  THẢO LUẬN"
+        color = discord.Color.gold()
+        duration = "5 phút"
+        status = "🔓 Chat đang mở"
+        tip = "Thảo luận, nghi ngờ và bỏ phiếu."
+    else:
+        title = "🌙  BAN ĐÊM  •  IM LẶNG"
+        color = discord.Color.dark_purple()
+        duration = "2 phút"
+        status = "🔒 Chat đang khóa"
+        tip = "Không thể chat trong phòng. Hãy chờ đêm kết thúc."
+    embed = discord.Embed(title=title, color=color)
+    if seconds_left is not None:
+        m, s = divmod(max(0, int(seconds_left)), 60)
+        embed.description = f"### ⏳ Còn **{m:02d}:{s:02d}**\n{status}"
+    else:
+        embed.description = f"### ⏱️ Thời lượng **{duration}**\n{status}"
+    embed.add_field(name="📜 Trạng thái", value=tip, inline=False)
+    embed.add_field(name="☀️ Ngày", value="5:00", inline=True)
+    embed.add_field(name="🌙 Đêm", value="2:00", inline=True)
+    embed.set_footer(text="Ma Sói • Chu kỳ tự động")
+    return embed
+
+
+WEREWOLF_BITE_EMOJI = "<a:werewolf_rnj29zcw:1547492968691269662>"
+WEREWOLF_ROLE_EMOJI = "<a:werewolf562516:1547493117786329098>"
+
+
+async def masoi_remove_player_from_room(room, victim_id):
+    """Ẩn người bị Ma Sói cắn khỏi kênh phòng, nhưng vẫn giữ họ trong dữ liệu ván."""
+    guild = bot.get_guild(room.get("guild_id"))
+    channel = guild.get_channel(room.get("channel_id")) if guild else None
+    member = guild.get_member(victim_id) if guild else None
+    if not channel or not member:
+        return False, "Không tìm thấy người chơi hoặc kênh phòng."
+    try:
+        await channel.set_permissions(
+            member,
+            view_channel=False,
+            send_messages=False,
+            add_reactions=False,
+            reason="Ma Sói: người chơi bị cắn rời phòng"
+        )
+        return True, None
+    except discord.Forbidden:
+        return False, "Bot thiếu quyền Manage Channels để cho người bị cắn rời phòng."
+
+
+async def masoi_resolve_night(room):
+    """Xử lý mục tiêu bị Sói cắn khi đêm kết thúc."""
+    if not room.get("started"):
+        return None
+    dead = set(room.setdefault("dead", []))
+    roles = room.get("roles", {})
+    wolf_roles = {"Sói Thường", "Sói Alpha", "Sói Con", "Sói Sát Thủ"}
+    votes = {}
+    for uid, action in room.get("actions", {}).items():
+        if action.get("phase") != "night" or action.get("target") in dead:
+            continue
+        if roles.get(uid) not in wolf_roles:
+            continue
+        target = int(action.get("target"))
+        # Sói không tự cắn Sói.
+        if roles.get(target) in wolf_roles:
+            continue
+        votes[target] = votes.get(target, 0) + 1
+    if not votes:
+        return None
+    victim_id = max(votes, key=votes.get)
+    dead.add(victim_id)
+    room["dead"] = list(dead)
+    room.setdefault("actions", {})[victim_id] = {"role": roles.get(victim_id), "phase": "dead"}
+    ok, err = await masoi_remove_player_from_room(room, victim_id)
+    guild = bot.get_guild(room.get("guild_id"))
+    member = guild.get_member(victim_id) if guild else None
+    victim_name = member.display_name if member else f"<@{victim_id}>"
+    return {"victim_id": victim_id, "victim_name": victim_name, "ok": ok, "err": err, "votes": votes.get(victim_id, 0)}
+
+
+async def masoi_phase_timer(room_id, phase, seconds):
+    """Tự động chuyển Ngày/Đêm: đêm 2 phút, ngày 5 phút."""
+    try:
+        await asyncio.sleep(seconds)
+        room = MASOI_ROOMS.get(room_id)
+        if not room or not room.get("started") or room.get("phase") != phase:
+            return
+
+        # Khi đêm kết thúc, xử lý người bị Sói cắn trước khi trời sáng.
+        night_result = None
+        if phase == "night":
+            night_result = await masoi_resolve_night(room)
+
+        target_phase = "day" if phase == "night" else "night"
+        locked = target_phase == "night"
+        ok, err = await masoi_set_chat_lock(room, locked)
+        room["phase"] = target_phase
+        channel = bot.get_channel(room.get("channel_id"))
+        if channel:
+            if night_result:
+                death_embed = discord.Embed(
+                    title=f"{WEREWOLF_BITE_EMOJI}  MA SÓI ĐÃ CẮN!",
+                    description=(f"### 💀 **{night_result['victim_name']}** đã bị Ma Sói cắn.\n"
+                                 f"{WEREWOLF_BITE_EMOJI} Người chơi này **đã rời khỏi phòng**."),
+                    color=discord.Color.red()
+                )
+                if not night_result["ok"]:
+                    death_embed.add_field(name="⚠️ Lỗi quyền", value=night_result["err"][:1024], inline=False)
+                await channel.send(embed=death_embed)
+
+            embed = masoi_phase_embed(target_phase)
+            embed.title = ("☀️  TRỜI SÁNG!" if target_phase == "day" else "🌙  ĐÊM XUỐNG!")
+            if target_phase == "day":
+                embed.description = "### 🗣️ Chat đã mở\n**5 phút** thảo luận và bỏ phiếu."
+            else:
+                embed.description = "### 🤫 Chat đã khóa\n**2 phút** ban đêm bắt đầu."
+            if not ok:
+                embed.add_field(name="⚠️ Cảnh báo", value=err[:1024], inline=False)
+            await channel.send(embed=embed)
+        room["phase_task"] = asyncio.create_task(
+            masoi_phase_timer(room_id, target_phase, 300 if target_phase == "day" else 120)
+        )
+    except asyncio.CancelledError:
+        return
+
+
+class MasoiRoleView(discord.ui.View):
+    """Bảng điều khiển sau khi chia bài."""
+    def __init__(self, room_id):
+        super().__init__(timeout=None)
+        self.room_id = room_id
+        self.add_item(MasoiRevealRoleButton(room_id))
+        self.add_item(MasoiDayButton(room_id))
+        self.add_item(MasoiNightButton(room_id))
+
+
+class MasoiDayButton(discord.ui.Button):
+    def __init__(self, room_id):
+        super().__init__(label="☀️ NGÀY • 5 PHÚT", style=discord.ButtonStyle.success, custom_id=f"masoi_day_{room_id}")
+        self.room_id = room_id
+
+    async def callback(self, interaction: discord.Interaction):
+        room = MASOI_ROOMS.get(self.room_id)
+        if not room or not room.get("started"):
+            return await interaction.response.send_message("❌ Ván chưa bắt đầu.", ephemeral=True)
+        if interaction.user.id != room["host"]:
+            return await interaction.response.send_message("❌ Chỉ chủ phòng mới được chuyển sang ngày.", ephemeral=True)
+        ok, err = await masoi_set_chat_lock(room, False)
+        if not ok:
+            return await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+        room["phase"] = "day"
+        old_task = room.get("phase_task")
+        if old_task and not old_task.done():
+            old_task.cancel()
+        room["phase_task"] = asyncio.create_task(masoi_phase_timer(self.room_id, "day", 300))
+        await interaction.response.send_message("☀️ **Trời sáng! Chat đã được mở.** Thời gian ban ngày: **5 phút**.", ephemeral=False)
+
+
+class MasoiNightButton(discord.ui.Button):
+    def __init__(self, room_id):
+        super().__init__(label="🌙 ĐÊM • 2 PHÚT", style=discord.ButtonStyle.danger, custom_id=f"masoi_night_{room_id}")
+        self.room_id = room_id
+
+    async def callback(self, interaction: discord.Interaction):
+        room = MASOI_ROOMS.get(self.room_id)
+        if not room or not room.get("started"):
+            return await interaction.response.send_message("❌ Ván chưa bắt đầu.", ephemeral=True)
+        if interaction.user.id != room["host"]:
+            return await interaction.response.send_message("❌ Chỉ chủ phòng mới được chuyển sang đêm.", ephemeral=True)
+        ok, err = await masoi_set_chat_lock(room, True)
+        if not ok:
+            return await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+        room["phase"] = "night"
+        old_task = room.get("phase_task")
+        if old_task and not old_task.done():
+            old_task.cancel()
+        room["phase_task"] = asyncio.create_task(masoi_phase_timer(self.room_id, "night", 120))
+        await interaction.response.send_message("🌙 **Đêm xuống! Chat đã bị khóa.** Thời gian ban đêm: **2 phút**.", ephemeral=False)
+
+
+def masoi_action_label(role, phase):
+    if phase == "day":
+        return "🗳️ Bỏ phiếu loại người chơi"
+    labels = {
+        "Tiên Tri": "🔮 Chọn người để soi",
+        "Phù Thủy": "🧪 Chọn hành động thuốc",
+        "Bảo Vệ": "🛡️ Chọn người để bảo vệ",
+        "Thợ Săn": "🏹 Chọn người để ngắm",
+        "Cupid": "💘 Chọn người ghép đôi",
+        "Thám Tử": "🕵️ Chọn người để điều tra",
+        "Sói Thường": "🐺 Chọn người để cắn",
+        "Sói Alpha": "👑 Chọn người để cắn",
+        "Sói Con": "🐺 Chọn người để cắn",
+        "Sói Sát Thủ": "🔪 Chọn người để hạ",
+    }
+    return labels.get(role, "🎯 Chọn mục tiêu")
+
+
+class MasoiActionSelect(discord.ui.Select):
+    def __init__(self, room_id, role, phase):
+        self.room_id = room_id
+        self.role = role
+        self.phase = phase
+        room = MASOI_ROOMS.get(room_id, {})
+        guild = bot.get_guild(room.get("guild_id"))
+        dead = set(room.get("dead", []))
+        options = []
+        wolf_roles = {"Sói Thường", "Sói Alpha", "Sói Con", "Sói Sát Thủ"}
+        for uid in room.get("players", []):
+            if uid == getattr(getattr(guild, "me", None), "id", None) or uid in dead:
+                continue
+            # Bảng chọn của Sói chỉ hiện người không thuộc phe Sói.
+            if role in wolf_roles and room.get("roles", {}).get(uid) in wolf_roles:
+                continue
+            member = guild.get_member(uid) if guild else None
+            name = member.display_name if member else f"Người chơi {uid}"
+            options.append(discord.SelectOption(label=name[:100], value=str(uid), description="Chọn mục tiêu này"))
+        options = options[:25]
+        if not options:
+            options = [discord.SelectOption(label="Chưa có mục tiêu", value="none")]
+        super().__init__(placeholder=masoi_action_label(role, phase), options=options, min_values=1, max_values=1)
+
+    async def callback(self, interaction: discord.Interaction):
+        room = MASOI_ROOMS.get(self.room_id)
+        if not room or not room.get("started"):
+            return await interaction.response.send_message("❌ Ván chưa bắt đầu hoặc đã kết thúc.", ephemeral=True)
+        if interaction.user.id not in room.get("roles", {}):
+            return await interaction.response.send_message("❌ Bạn không ở trong ván này.", ephemeral=True)
+        if interaction.user.id in room.get("dead", []):
+            return await interaction.response.send_message("💀 Bạn đã bị loại khỏi ván.", ephemeral=True)
+        if room.get("phase") != self.phase:
+            return await interaction.response.send_message("⏰ Giai đoạn đã thay đổi, hãy mở lại bảng chọn.", ephemeral=True)
+        if self.values[0] == "none":
+            return await interaction.response.send_message("❌ Chưa có mục tiêu hợp lệ.", ephemeral=True)
+        target_id = int(self.values[0])
+        room.setdefault("actions", {})[interaction.user.id] = {
+            "role": self.role, "phase": self.phase, "target": target_id
+        }
+        guild = bot.get_guild(room.get("guild_id"))
+        target = guild.get_member(target_id) if guild else None
+        target_name = target.display_name if target else f"<@{target_id}>"
+        await interaction.response.send_message(
+            f"✅ **{masoi_action_label(self.role, self.phase)}**\n🎯 Mục tiêu: **{target_name}**\n🔒 Lựa chọn đã được ghi nhận riêng tư.",
+            ephemeral=True
+        )
+
+
+class MasoiActionView(discord.ui.View):
+    def __init__(self, room_id, role, phase):
+        super().__init__(timeout=300)
+        self.add_item(MasoiActionSelect(room_id, role, phase))
+
+
+class MasoiRevealRoleButton(discord.ui.Button):
+    def __init__(self, room_id):
+        super().__init__(label="Xem vai của tôi", emoji=WEREWOLF_ROLE_EMOJI, style=discord.ButtonStyle.primary, custom_id=f"masoi_reveal_{room_id}")
+        self.room_id = room_id
+
+    async def callback(self, interaction: discord.Interaction):
+        room = MASOI_ROOMS.get(self.room_id)
+        if not room or not room.get("started"):
+            return await interaction.response.send_message("❌ Ván chưa được chia bài hoặc đã kết thúc.", ephemeral=True)
+        role = room["roles"].get(interaction.user.id)
+        if not role:
+            return await interaction.response.send_message("❌ Bạn không có trong ván Ma Sói này.", ephemeral=True)
+        faction, ability = MASOI_ROLE_INFO[role]
+        emoji = MASOI_ROLE_EMOJI.get(role, "🎭")
+        phase = room.get("phase", "night")
+
+        # Bảng vai hoàn toàn riêng tư: Discord chỉ gửi ephemeral cho người vừa bấm.
+        embed = discord.Embed(
+            title=f"{WEREWOLF_ROLE_EMOJI}  VAI BÍ MẬT CỦA BẠN  {WEREWOLF_BITE_EMOJI}",
+            color=discord.Color.from_rgb(74, 42, 105)
+        )
+        embed.description = (
+            f"# {WEREWOLF_ROLE_EMOJI}  {emoji} **{role}**  {WEREWOLF_BITE_EMOJI}\n"
+            f"### {faction}\n\n"
+            f"{WEREWOLF_ROLE_EMOJI}━━━━━━━━━━━━━━━━━━━━{WEREWOLF_BITE_EMOJI}"
+        )
+        embed.add_field(name="📖 CHỨC NĂNG", value=ability, inline=False)
+        embed.add_field(name="🎯 HÀNH ĐỘNG HIỆN TẠI", value=masoi_action_label(role, phase), inline=False)
+        embed.add_field(
+            name="🔐 BẢO MẬT",
+            value=f"{WEREWOLF_ROLE_EMOJI} **Chỉ bạn nhìn thấy bảng này.**\nNgười chơi khác không thể xem vai của bạn.",
+            inline=False
+        )
+        embed.set_footer(text="🐺 Ma Sói • Vai này là bí mật • Không chia sẻ màn hình vai của bạn")
+
+        await interaction.response.send_message(
+            embed=embed,
+            view=MasoiActionView(self.room_id, role, phase),
+            ephemeral=True
+        )
+
+
+class MasoiJoinPasswordModal(discord.ui.Modal, title="🔐 MẬT KHẨU PHÒNG MA SÓI"):
+    password = discord.ui.TextInput(
+        label="Nhập mật khẩu phòng",
+        placeholder="Mật khẩu do chủ phòng cung cấp",
+        max_length=30,
+        required=True
+    )
+
+    def __init__(self, room_id):
+        super().__init__()
+        self.room_id = room_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        room = MASOI_ROOMS.get(self.room_id)
+        if not room or room.get("started"):
+            return await interaction.response.send_message("❌ Phòng đã bắt đầu hoặc không còn tồn tại.", ephemeral=True)
+        if self.password.value.strip() != room.get("password"):
+            return await interaction.response.send_message("❌ Sai mật khẩu phòng.", ephemeral=True)
+        if interaction.user.id not in room["players"]:
+            room["players"].append(interaction.user.id)
+        await interaction.response.edit_message(embed=masoi_lobby_embed(room), view=MasoiJoinView(self.room_id))
+
+
+class MasoiJoinView(discord.ui.View):
+    def __init__(self, room_id):
+        super().__init__(timeout=3600)
+        self.room_id = room_id
+
+    @discord.ui.button(label="🎮 Tham gia", style=discord.ButtonStyle.success)
+    async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
+        room = MASOI_ROOMS.get(self.room_id)
+        if not room or room.get("started"):
+            return await interaction.response.send_message("❌ Phòng đã bắt đầu hoặc không còn tồn tại.", ephemeral=True)
+        if interaction.user.id in room["players"]:
+            return await interaction.response.send_message("✅ Bạn đã tham gia rồi!", ephemeral=True)
+        if len(room["players"]) >= room.get("max_players", 25):
+            return await interaction.response.send_message(f"❌ Phòng đã đủ {room.get('max_players', 25)} người.", ephemeral=True)
+        if room.get("password"):
+            return await interaction.response.send_modal(MasoiJoinPasswordModal(self.room_id))
+        room["players"].append(interaction.user.id)
+        await interaction.response.edit_message(embed=masoi_lobby_embed(room), view=self)
+
+    @discord.ui.button(label="🔒 Khóa chat", style=discord.ButtonStyle.secondary)
+    async def lock_chat(self, interaction: discord.Interaction, button: discord.ui.Button):
+        room = MASOI_ROOMS.get(self.room_id)
+        if not room:
+            return await interaction.response.send_message("❌ Không tìm thấy phòng.", ephemeral=True)
+        if interaction.user.id != room["host"]:
+            return await interaction.response.send_message("❌ Chỉ chủ phòng mới được khóa chat.", ephemeral=True)
+        ok, err = await masoi_set_chat_lock(room, True)
+        if not ok:
+            return await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+        await interaction.response.send_message("🔒 **Đã khóa chat tất cả người chơi trong phòng.**", ephemeral=True)
+
+    @discord.ui.button(label="🔓 Mở chat", style=discord.ButtonStyle.secondary)
+    async def unlock_chat(self, interaction: discord.Interaction, button: discord.ui.Button):
+        room = MASOI_ROOMS.get(self.room_id)
+        if not room:
+            return await interaction.response.send_message("❌ Không tìm thấy phòng.", ephemeral=True)
+        if interaction.user.id != room["host"]:
+            return await interaction.response.send_message("❌ Chỉ chủ phòng mới được mở chat.", ephemeral=True)
+        ok, err = await masoi_set_chat_lock(room, False)
+        if not ok:
+            return await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+        await interaction.response.send_message("🔓 **Đã mở chat cho người chơi.**", ephemeral=True)
+
+    @discord.ui.button(label="▶️ Bắt đầu chia bài", style=discord.ButtonStyle.primary)
+    async def start(self, interaction: discord.Interaction, button: discord.ui.Button):
+        room = MASOI_ROOMS.get(self.room_id)
+        if not room:
+            return await interaction.response.send_message("❌ Không tìm thấy phòng.", ephemeral=True)
+        if interaction.user.id != room["host"]:
+            return await interaction.response.send_message("❌ Chỉ chủ phòng mới được bắt đầu.", ephemeral=True)
+        n = len(room["players"])
+        if n < 6:
+            return await interaction.response.send_message("❌ Cần ít nhất 6 người để bắt đầu.", ephemeral=True)
+        roles = masoi_roles_for_count(n)
+        random.shuffle(roles)
+        room["roles"] = dict(zip(room["players"], roles))
+        room["started"] = True
+        room["phase"] = "night"
+        # Vừa chia bài là bước vào đêm đầu tiên -> khóa chat người chơi.
+        lock_ok, lock_err = await masoi_set_chat_lock(room, True)
+        room["phase_task"] = asyncio.create_task(masoi_phase_timer(self.room_id, "night", 120))
+        embed = discord.Embed(
+            title="🐺  MA SÓI  •  VÁN ĐÃ BẮT ĐẦU",
+            description=("### 🎭 BÀI ĐÃ ĐƯỢC CHIA\n"
+                         "Mỗi người hãy bấm **<a:werewolf562516:1547493117786329098> Xem vai của tôi** để xem vai bí mật.\n\n"
+                         "### 🌙 ĐÊM ĐẦU TIÊN\n"
+                         "Chat đã **khóa**. Đêm kéo dài **2:00** → sau đó tự động chuyển sang **☀️ Ngày 5:00**.\n\n"
+                         "> 🔐 **Tuyệt đối không tiết lộ vai của mình.**"),
+            color=discord.Color.from_rgb(54, 35, 76)
+        )
+        embed.add_field(name="👥 Người chơi", value=str(n), inline=True)
+        embed.add_field(name="🐺 Ma Sói", value=str(sum(1 for r in roles if "Sói" in r)), inline=True)
+        embed.add_field(name="🎭 Vai đặc biệt", value=str(sum(1 for r in roles if r not in ("Dân Làng", "Sói Thường"))), inline=True)
+        embed.add_field(name="🌙 Giai đoạn", value="ĐÊM — chat đã khóa" if lock_ok else "⚠️ Đêm nhưng chưa khóa được chat", inline=True)
+        embed.add_field(name="⏱️ Thời gian", value="Đêm: **2 phút** • Ngày: **5 phút** • Tự động chuyển", inline=False)
+        if lock_err:
+            embed.add_field(name="⚠️ Lỗi quyền", value=lock_err[:1024], inline=False)
+        await interaction.response.edit_message(embed=embed, view=MasoiRoleView(self.room_id))
+
+
+def masoi_lobby_embed(room):
+    players = room["players"]
+    names = []
+    guild = bot.get_guild(room["guild_id"])
+    host_id = room.get("host")
+    if guild:
+        for uid in players:
+            m = guild.get_member(uid)
+            name = m.mention if m else f"<@{uid}>"
+            if uid == host_id:
+                name += "  👑"
+            names.append(name)
+    desc = "\n".join(f"`{i:02d}` {x}" for i, x in enumerate(names, 1)) or "*Chưa có ai tham gia.*"
+    count = len(players)
+    maximum = room.get("max_players", 25)
+    progress = "🟩" * min(10, round(count / maximum * 10)) + "⬜" * max(0, 10 - min(10, round(count / maximum * 10)))
+    embed = discord.Embed(
+        title=f"🐺  {room.get('room_name', 'PHÒNG MA SÓI').upper()}",
+        description="### 🎮 SẢNH CHỜ\n" + desc,
+        color=discord.Color.from_rgb(88, 61, 122)
+    )
+    embed.add_field(name="👥 Người chơi", value=f"**{count} / {maximum}**\n{progress}", inline=True)
+    embed.add_field(name="👑 Chủ phòng", value=f"<@{host_id}>", inline=True)
+    embed.add_field(name="🎯 Điều kiện", value="Tối thiểu **6 người**", inline=True)
+    embed.add_field(name="🌙 Khi bắt đầu", value="Đêm **2:00** → Ngày **5:00** → tự động lặp", inline=False)
+    embed.set_footer(text="🐺 Ma Sói • Chủ phòng bấm ▶️ Bắt đầu chia bài khi đủ người")
+    return embed
+
+
+@bot.tree.command(name="masoi", description="Tạo phòng Ma Sói 6-25 người")
+async def masoi_command(interaction: discord.Interaction):
+    await interaction.response.send_modal(MasoiCreateModal())
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 if __name__ == "__main__":
