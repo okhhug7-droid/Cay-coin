@@ -1501,16 +1501,12 @@ async def on_member_join(member: discord.Member):
         file = discord.File(gif_path, filename=os.path.basename(gif_path))
         embed.set_image(url=f"attachment://{os.path.basename(gif_path)}")
         await channel.send(
-            content=member.mention,
             embed=embed,
-            file=file,
-            allowed_mentions=discord.AllowedMentions(users=True)
+            file=file
         )
     else:
         await channel.send(
-            content=member.mention,
-            embed=embed,
-            allowed_mentions=discord.AllowedMentions(users=True)
+            embed=embed
         )
 
 
