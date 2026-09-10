@@ -1377,8 +1377,52 @@ async def nhanrole(interaction: discord.Interaction):
 
 @bot.command(name="afk")
 async def afk(ctx, *, reason="Bận"):
-    afk_users[ctx.author.id] = reason
-    await ctx.send(f"💤 {ctx.author.mention} đã bật chế độ AFK.")
+    """Bật AFK và lưu lý do."""
+    afk_users[ctx.author.id] = {
+        "reason": reason.strip() or "Bận",
+        "since": datetime.datetime.now(datetime.timezone.utc),
+        "guild_id": ctx.guild.id if ctx.guild else None,
+    }
+    await ctx.send(
+        f"💤 **{ctx.author.display_name}** đã bật AFK.\n"
+        f"📝 Lý do: **{afk_users[ctx.author.id]['reason']}**"
+    )
+
+
+
+
+async def handle_afk_message(message: discord.Message):
+    """Thông báo AFK của người được nhắc và tự tắt AFK khi họ quay lại chat."""
+    if not message.guild:
+        return
+
+    # Nếu chính người đang AFK quay lại nhắn tin -> tự tắt AFK.
+    own_afk = afk_users.get(message.author.id)
+    if own_afk:
+        afk_users.pop(message.author.id, None)
+        try:
+            await message.channel.send(
+                f"👋 **{message.author.display_name}** đã quay lại, AFK đã tự tắt."
+            )
+        except discord.HTTPException:
+            pass
+
+    # Kiểm tra các member được mention có đang AFK không.
+    checked = set()
+    for member in message.mentions:
+        if member.id in checked or member.id == message.author.id:
+            continue
+        checked.add(member.id)
+
+        data = afk_users.get(member.id)
+        if not data:
+            continue
+
+        reason = data.get("reason", "Bận")
+        await message.channel.send(
+            f"💤 **{member.display_name}** đang AFK.\n"
+            f"📝 Lý do: **{reason}**"
+        )
 
 
 @bot.tree.command(name="setupstats", description="Tạo kênh thống kê server (Admin)")
@@ -1545,6 +1589,9 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
+
+    # --- HỆ THỐNG AFK ---
+    await handle_afk_message(message)
 
     # --- HỆ THỐNG MESSAGE / AI / XP & LEVEL ---
     # AI CHỈ HOẠT ĐỘNG KHI USER PING BOT (@bot).
