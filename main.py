@@ -5,7 +5,12 @@ import datetime
 import sqlite3
 import math
 import asyncio
+import functools
+import json
+import urllib.parse
+import urllib.request
 from google import genai
+import yt_dlp
 
 
 # --- TÍNH CÁCH CHAT TỰ NHIÊN ---
@@ -104,6 +109,141 @@ db_cursor.execute("""
 """)
 db_conn.commit()
 
+# --- HỆ THỐNG TREO CALL ---
+db_cursor.execute("""
+    CREATE TABLE IF NOT EXISTS voice_channels (
+        guild_id INTEGER PRIMARY KEY,
+        channel_id INTEGER NOT NULL
+    )
+""")
+db_conn.commit()
+
+voice_keepalive_tasks = {}
+
+# --- HỆ THỐNG PHÁT NHẠC ---
+music_queues = {}
+music_now_playing = {}
+music_locks = {}
+
+YTDL_OPTIONS = {
+    "format": "bestaudio/best",
+    "noplaylist": True,
+    "quiet": True,
+    "no_warnings": True,
+    "default_search": "ytsearch",
+    "source_address": "0.0.0.0",
+}
+
+FFMPEG_OPTIONS = {
+    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+    "options": "-vn",
+}
+
+def get_music_queue(guild_id: int):
+    return music_queues.setdefault(guild_id, [])
+
+async def spotify_to_youtube_query(spotify_url: str):
+    def _get():
+        api = "https://open.spotify.com/oembed?url=" + urllib.parse.quote(spotify_url, safe="")
+        req = urllib.request.Request(api, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        title = data.get("title", "").strip()
+        author = data.get("author_name", "").strip()
+        if not title:
+            raise ValueError("Không đọc được thông tin bài hát Spotify")
+        return f"ytsearch1:{author} - {title}" if author else f"ytsearch1:{title}"
+    return await asyncio.get_running_loop().run_in_executor(None, _get)
+
+async def extract_audio(query: str):
+    if "open.spotify.com/" in query.lower():
+        query = await spotify_to_youtube_query(query)
+    loop = asyncio.get_running_loop()
+    def _extract():
+        with yt_dlp.YoutubeDL(YTDL_OPTIONS) as ydl:
+            info = ydl.extract_info(query, download=False)
+            if "entries" in info:
+                entries = [e for e in info["entries"] if e]
+                if not entries: raise ValueError("Không tìm thấy bài nhạc")
+                info = entries[0]
+            return {"title": info.get("title", "Không rõ tên"), "url": info["url"], "webpage_url": info.get("webpage_url", query)}
+    return await loop.run_in_executor(None, _extract)
+
+async def play_next(guild: discord.Guild):
+    queue = get_music_queue(guild.id)
+    voice = guild.voice_client
+    if not voice or not voice.is_connected() or not queue:
+        music_now_playing.pop(guild.id, None)
+        return
+
+    track = queue.pop(0)
+    music_now_playing[guild.id] = track
+
+    def after_play(error):
+        if error:
+            print(f"⚠️ Lỗi phát nhạc guild {guild.id}: {error}")
+        fut = asyncio.run_coroutine_threadsafe(play_next(guild), bot.loop)
+        try:
+            fut.result()
+        except Exception as e:
+            print(f"⚠️ Không thể phát bài tiếp theo: {e}")
+
+    try:
+        source = discord.FFmpegPCMAudio(track["url"], **FFMPEG_OPTIONS)
+        voice.play(source, after=after_play)
+    except Exception as e:
+        music_now_playing.pop(guild.id, None)
+        print(f"⚠️ Không thể phát nhạc: {e}")
+        await play_next(guild)
+
+
+async def keep_voice_connected(guild_id: int, channel_id: int):
+    """Giữ bot trong voice channel và tự kết nối lại khi bị ngắt."""
+    await bot.wait_until_ready()
+
+    while not bot.is_closed():
+        try:
+            guild = bot.get_guild(guild_id)
+            if not guild:
+                return
+
+            channel = guild.get_channel(channel_id)
+            if not isinstance(channel, discord.VoiceChannel):
+                return
+
+            voice = guild.voice_client
+
+            if voice is None:
+                await channel.connect(reconnect=True, timeout=30)
+            elif not voice.is_connected():
+                await voice.disconnect(force=True)
+                await asyncio.sleep(2)
+                await channel.connect(reconnect=True, timeout=30)
+            elif voice.channel and voice.channel.id != channel_id:
+                await voice.move_to(channel)
+
+            await asyncio.sleep(10)
+
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            print(f"⚠️ Treo call guild {guild_id}: {e}")
+            await asyncio.sleep(5)
+
+def start_voice_keepalive(guild_id: int, channel_id: int):
+    old_task = voice_keepalive_tasks.get(guild_id)
+    if old_task and not old_task.done():
+        old_task.cancel()
+
+    voice_keepalive_tasks[guild_id] = asyncio.create_task(
+        keep_voice_connected(guild_id, channel_id)
+    )
+
+def stop_voice_keepalive(guild_id: int):
+    task = voice_keepalive_tasks.pop(guild_id, None)
+    if task and not task.done():
+        task.cancel()
+
 afk_users = {}
 user_birthdays = {}         
 server_congrats_channels = {}  
@@ -132,9 +272,6 @@ LEVELUP_CONFIG = {
     "gif_path": "levelup_gif.gif"
 }
 
-# Role sẽ được ping trong thông báo level up
-LEVELUP_PING_ROLE_ID = 1515041455805304953
-
 SPECIAL_ADMIN_ID = 1180179460339810314
 FOOTER_AUTHOR = "by ph.huyy"
 BIRTHDAY_GIF_PATH = "hb_gif.gif" 
@@ -147,9 +284,14 @@ async def on_ready():
     if not update_stats_loop.is_running():
         update_stats_loop.start()
     
+    # Khôi phục các kênh treo call sau khi bot restart.
+    db_cursor.execute("SELECT guild_id, channel_id FROM voice_channels")
+    for saved_guild_id, saved_channel_id in db_cursor.fetchall():
+        start_voice_keepalive(saved_guild_id, saved_channel_id)
+
     try:
         synced = await bot.tree.sync()
-        print(f"✨ Đã đồng bộ thành công {len(synced)} lệnh slash (/).")
+        print(f"✨ Đã đồng bộ {len(synced)} lệnh slash (/). Lệnh bot prefix dùng `!`.")
         # Khôi phục các nút bình chọn sau khi bot restart.
         db_cursor.execute("SELECT message_id, options FROM polls")
         for poll_message_id, options_text in db_cursor.fetchall():
@@ -221,8 +363,6 @@ async def setlevelconfig(
     embed.set_footer(text=f"Thực hiện bởi {interaction.user.display_name} | {FOOTER_AUTHOR}")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-
-LEVEL_ROLE_MILESTONES = [1, 25, 50, 100, 200]
 
 class SingleLevelRoleModal(discord.ui.Modal, title="📌 Gắn ID Role Cho Mốc Level"):
     def __init__(self, target_level: int):
@@ -472,6 +612,506 @@ class PollModal(discord.ui.Modal, title="🗳️ Tạo bảng bình chọn"):
         )
 
 
+@bot.tree.command(name="binhchon", description="Mở form tạo bảng bình chọn (Admin)")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def binhchon(interaction: discord.Interaction):
+    if not isinstance(interaction.channel, discord.TextChannel):
+        await interaction.response.send_message("❌ Lệnh này chỉ dùng được trong kênh text!", ephemeral=True)
+        return
+    await interaction.response.send_modal(PollModal(interaction.channel))
+
+
+@bot.tree.command(name="xembinhchon", description="Xem kết quả bình chọn (Admin)")
+@discord.app_commands.describe(message_id="ID tin nhắn của bảng bình chọn")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def xembinhchon(interaction: discord.Interaction, message_id: str):
+    try:
+        poll_id = int(message_id)
+    except ValueError:
+        await interaction.response.send_message("❌ Message ID không hợp lệ!", ephemeral=True)
+        return
+
+    db_cursor.execute("SELECT channel_id, options, question FROM polls WHERE message_id = ? AND guild_id = ?", (poll_id, interaction.guild.id))
+    row = db_cursor.fetchone()
+    if not row:
+        await interaction.response.send_message("❌ Không tìm thấy bảng bình chọn này.", ephemeral=True)
+        return
+
+    channel = interaction.guild.get_channel(row[0])
+    if not channel:
+        await interaction.response.send_message("❌ Không tìm thấy kênh chứa bảng bình chọn.", ephemeral=True)
+        return
+
+    try:
+        poll_message = await channel.fetch_message(poll_id)
+    except (discord.NotFound, discord.Forbidden):
+        await interaction.response.send_message("❌ Không thể lấy tin nhắn bình chọn.", ephemeral=True)
+        return
+
+    options = row[1].split("\n")
+    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    lines = []
+    total = 0
+    counts = []
+    for i, option in enumerate(options):
+        count = 0
+        for reaction in poll_message.reactions:
+            if str(reaction.emoji) == emojis[i]:
+                count = max(reaction.count - 1, 0)
+                break
+        counts.append(count)
+        total += count
+
+    for i, option in enumerate(options):
+        percent = (counts[i] / total * 100) if total else 0
+        bar = "🟦" * min(10, round(percent / 10)) + "⬜" * max(0, 10 - round(percent / 10))
+        lines.append(f"**{i+1}. {option}**\n{bar} **{counts[i]} vote** ({percent:.0f}%)")
+
+    embed = discord.Embed(
+        title="📊  KẾT QUẢ BÌNH CHỌN",
+        description=f"## {row[2]}\n\n" + "\n\n".join(lines),
+        color=discord.Color.green()
+    )
+    embed.set_footer(text=f"Tổng số lượt vote: {total}")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="setwelcome", description="Cài đặt welcome và GIF nhỏ (Admin)")
+@discord.app_commands.describe(message="Nội dung", channel="Kênh", gif_file="File GIF")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setwelcome(interaction: discord.Interaction, message: str, channel: discord.TextChannel, gif_file: discord.Attachment = None):
+    WELCOME_CONFIG["channel_id"] = channel.id
+    WELCOME_CONFIG["message"] = message
+
+    if gif_file:
+        await gif_file.save("welcome_gif.gif")
+        WELCOME_CONFIG["gif_path"] = "welcome_gif.gif"
+
+    await interaction.response.send_message("✅ Đã cập nhật cấu hình Welcome!", ephemeral=True)
+
+
+@bot.tree.command(name="setboost", description="Cài đặt thông báo Boost (Admin)")
+@discord.app_commands.describe(channel="Kênh", message="Nội dung")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setboost(interaction: discord.Interaction, channel: discord.TextChannel, message: str):
+    server_boost_channels[interaction.guild.id] = channel.id
+    BOOST_CONFIG["message"] = message
+    await interaction.response.send_message("✅ Đã cập nhật cấu hình Boost!", ephemeral=True)
+
+
+@bot.tree.command(name="setboostrole", description="Cài đặt role khi Boost (Admin)")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setboostrole(interaction: discord.Interaction, role: discord.Role):
+    db_cursor.execute("""
+        INSERT INTO server_boost_roles (guild_id, role_id) 
+        VALUES (?, ?) 
+        ON CONFLICT(guild_id) DO UPDATE SET role_id = ?
+    """, (interaction.guild.id, role.id, role.id))
+    db_conn.commit()
+    await interaction.response.send_message(f"✅ Đã thiết lập Role Boost: {role.mention}", ephemeral=True)
+
+
+class BirthdayModal(discord.ui.Modal, title="🎂 Đăng ký Ngày Sinh Nhật"):
+    dob_input = discord.ui.TextInput(label="Ngày sinh (DD/MM/YYYY)", placeholder="25/12/2004", required=True, max_length=15)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_birthdays[interaction.user.id] = self.dob_input.value.strip()
+        await interaction.response.send_message("✅ Đã lưu ngày sinh thành công!", ephemeral=True)
+
+class BirthdayView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🎉 Nhập ngày sinh", style=discord.ButtonStyle.primary, custom_id="setup_birthday_btn")
+    async def birthday_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(BirthdayModal())
+
+@bot.tree.command(name="setannouncement", description="Thiết lập kênh thông báo (Admin)")
+@discord.app_commands.describe(channel="Kênh sẽ nhận thông báo")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setannouncement(interaction: discord.Interaction, channel: discord.TextChannel):
+    db_cursor.execute("""
+        INSERT INTO announcement_channels (guild_id, channel_id)
+        VALUES (?, ?)
+        ON CONFLICT(guild_id) DO UPDATE SET channel_id = ?
+    """, (interaction.guild.id, channel.id, channel.id))
+    db_conn.commit()
+    await interaction.response.send_message(
+        f"✅ Đã đặt {channel.mention} làm kênh thông báo!", ephemeral=True
+    )
+
+
+@bot.tree.command(name="thongbao", description="Gửi thông báo tới kênh đã cài đặt (Admin)")
+@discord.app_commands.describe(message="Nội dung thông báo")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def thongbao(interaction: discord.Interaction, message: str):
+    db_cursor.execute("SELECT channel_id FROM announcement_channels WHERE guild_id = ?", (interaction.guild.id,))
+    row = db_cursor.fetchone()
+    if not row:
+        await interaction.response.send_message("❌ Chưa cài kênh thông báo. Dùng `/setannouncement` trước.", ephemeral=True); return
+    channel = interaction.guild.get_channel(row[0])
+    if not channel:
+        await interaction.response.send_message("❌ Không tìm thấy kênh thông báo. Hãy dùng `/setannouncement` để cài lại.", ephemeral=True); return
+    role_id = 1515041455805304953
+    embed = discord.Embed(title="📢 THÔNG BÁO", description=message, color=discord.Color.blurple())
+    embed.set_footer(text=FOOTER_AUTHOR)
+    try:
+        await channel.send(content=f"<@&{role_id}>", embed=embed, allowed_mentions=discord.AllowedMentions(roles=True))
+        await interaction.response.send_message(f"✅ Đã gửi thông báo vào {channel.mention}!", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.response.send_message("❌ Bot không có quyền gửi tin nhắn vào kênh đó.", ephemeral=True)
+
+
+@bot.tree.command(name="setbirthday", description="Thiết lập sinh nhật (Admin)")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setbirthday(interaction: discord.Interaction, channel: discord.TextChannel, congrats_channel: discord.TextChannel):
+    server_congrats_channels[interaction.guild.id] = congrats_channel.id
+    embed = discord.Embed(title="🎈 ĐĂNG KÝ SINH NHẬT", description="Nhấn nút bên dưới để khai báo ngày sinh.", color=discord.Color.pink())
+    await channel.send(embed=embed, view=BirthdayView())
+    await interaction.response.send_message("✅ Đã tạo bảng đăng ký sinh nhật!", ephemeral=True)
+
+
+@tasks.loop(hours=24)
+async def check_birthdays():
+    now = datetime.datetime.now()
+    today_str = now.strftime("%d/%m")
+    for guild in bot.guilds:
+        if guild.id not in server_congrats_channels:
+            continue
+        channel = guild.get_channel(server_congrats_channels[guild.id])
+        if not channel:
+            continue
+        for user_id, dob_str in user_birthdays.items():
+            if dob_str.startswith(today_str):
+                member = guild.get_member(user_id)
+                if member:
+                    embed = discord.Embed(title="🎉 CHÚC MỪNG SINH NHẬT! 🎂", description=f"Chúc mừng sinh nhật {member.mention}! 🥳", color=discord.Color.pink())
+                    if os.path.exists(BIRTHDAY_GIF_PATH):
+                        await channel.send(embed=embed, file=discord.File(BIRTHDAY_GIF_PATH, filename="hb_gif.gif"))
+                    else:
+                        await channel.send(embed=embed)
+
+
+@bot.command(name="treocall")
+@commands.has_permissions(administrator=True)
+async def treocall(ctx):
+    if not ctx.author.voice or not ctx.author.voice.channel:
+        await ctx.send("❌ Bạn phải vào kênh voice trước rồi dùng `!treocall`."); return
+    channel = ctx.author.voice.channel
+    try:
+        if channel.name != "birthdaytime.gg 🎧":
+            await channel.edit(name="birthdaytime.gg 🎧", reason="Đặt tên kênh treo call")
+    except Exception: pass
+    try:
+        voice = ctx.guild.voice_client
+        if voice and voice.channel and voice.channel.id != channel.id:
+            await voice.move_to(channel)
+        elif not voice or not voice.is_connected():
+            await channel.connect(reconnect=True, timeout=30)
+        db_cursor.execute("INSERT INTO voice_channels (guild_id, channel_id) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET channel_id = ?", (ctx.guild.id, channel.id, channel.id))
+        db_conn.commit(); start_voice_keepalive(ctx.guild.id, channel.id)
+        await ctx.send(f"📞 Đã bật treo call 24/7 tại {channel.mention}.")
+    except Exception as e:
+        await ctx.send(f"❌ Không thể vào voice: `{e}`")
+
+
+@bot.command(name="dungtreocall")
+@commands.has_permissions(administrator=True)
+async def dungtreocall(ctx):
+    stop_voice_keepalive(ctx.guild.id)
+    db_cursor.execute("DELETE FROM voice_channels WHERE guild_id = ?", (ctx.guild.id,))
+    db_conn.commit()
+    voice = ctx.guild.voice_client
+    if voice:
+        try:
+            await voice.disconnect(force=True)
+        except Exception:
+            pass
+    await ctx.send("📴 Đã dừng treo call và bot đã rời voice.")
+
+
+@bot.command(name="checktreocall")
+@commands.has_permissions(administrator=True)
+async def checktreocall(ctx):
+    db_cursor.execute("SELECT channel_id FROM voice_channels WHERE guild_id = ?", (ctx.guild.id,))
+    row = db_cursor.fetchone()
+    voice = ctx.guild.voice_client
+    if row:
+        channel = ctx.guild.get_channel(row[0])
+        status = "🟢 Đang kết nối" if voice and voice.is_connected() else "🟡 Đang tự kết nối lại"
+        await ctx.send(f"📞 **Treo call:** {status}\n🎙️ **Kênh:** {channel.mention if channel else row[0]}")
+    else:
+        await ctx.send("⚪ Server này chưa bật treo call.")
+
+
+@bot.command(name="play")
+async def play(ctx, *, query: str):
+    """Phát nhạc từ URL hoặc tìm kiếm theo tên bài."""
+    if not ctx.guild:
+        return
+
+    voice = ctx.guild.voice_client
+    if not voice or not voice.is_connected():
+        if not getattr(ctx.author, "voice", None) or not ctx.author.voice:
+            await ctx.send("❌ Bạn phải vào voice trước để bot biết kênh cần vào.")
+            return
+        try:
+            voice = await ctx.author.voice.channel.connect(reconnect=True, timeout=30)
+        except Exception as e:
+            await ctx.send(f"❌ Không thể vào voice: `{e}`")
+            return
+
+    try:
+        track = await extract_audio(query)
+    except Exception as e:
+        await ctx.send(f"❌ Không tìm được bài nhạc: `{e}`")
+        return
+
+    queue = get_music_queue(ctx.guild.id)
+    queue.append(track)
+
+    if not voice.is_playing() and not voice.is_paused():
+        await play_next(ctx.guild)
+        await ctx.send(f"🎵 Đang phát: **{track['title']}**")
+    else:
+        await ctx.send(f"➕ Đã thêm vào hàng chờ: **{track['title']}** (vị trí {len(queue)})")
+
+
+@bot.command(name="skip")
+async def skip(ctx):
+    voice = ctx.guild.voice_client if ctx.guild else None
+    if not voice or not voice.is_playing():
+        await ctx.send("❌ Hiện không có bài nào đang phát.")
+        return
+    voice.stop()
+    await ctx.send("⏭️ Đã chuyển bài.")
+
+
+@bot.command(name="pause")
+async def pause(ctx):
+    voice = ctx.guild.voice_client if ctx.guild else None
+    if voice and voice.is_playing():
+        voice.pause()
+        await ctx.send("⏸️ Đã tạm dừng nhạc.")
+    else:
+        await ctx.send("❌ Không có nhạc đang phát.")
+
+
+@bot.command(name="resume")
+async def resume(ctx):
+    voice = ctx.guild.voice_client if ctx.guild else None
+    if voice and voice.is_paused():
+        voice.resume()
+        await ctx.send("▶️ Đã tiếp tục phát nhạc.")
+    else:
+        await ctx.send("❌ Nhạc hiện không bị tạm dừng.")
+
+
+@bot.command(name="stop")
+async def stop(ctx):
+    if not ctx.guild:
+        return
+    queue = get_music_queue(ctx.guild.id)
+    queue.clear()
+    music_now_playing.pop(ctx.guild.id, None)
+    voice = ctx.guild.voice_client
+    if voice and voice.is_playing():
+        voice.stop()
+    await ctx.send("⏹️ Đã dừng nhạc và xoá hàng chờ.")
+
+
+@bot.command(name="queue")
+async def queue_cmd(ctx):
+    if not ctx.guild:
+        return
+    queue = get_music_queue(ctx.guild.id)
+    current = music_now_playing.get(ctx.guild.id)
+    lines = []
+    if current:
+        lines.append(f"🎵 **Đang phát:** {current['title']}")
+    if queue:
+        lines.append("\n".join(f"**{i}.** {t['title']}" for i, t in enumerate(queue, 1)))
+    if not lines:
+        await ctx.send("📭 Hàng chờ đang trống.")
+        return
+    await ctx.send("📜 **QUEUE**\n" + "\n".join(lines))
+
+
+@bot.command(name="ban")
+@commands.has_permissions(ban_members=True)
+async def ban(ctx, member: discord.Member, *, reason="Không có lý do"):
+    await member.ban(reason=reason)
+    await ctx.send(f"🔨 Đã ban **{member.mention}**.")
+
+@bot.command(name="unban")
+@commands.has_permissions(ban_members=True)
+async def unban(ctx, user_id: int, *, reason="Không có lý do"):
+    user = await bot.fetch_user(user_id)
+    await ctx.guild.unban(user, reason=reason)
+    await ctx.send(f"🔓 Đã unban thành công.")
+
+@bot.command(name="mute")
+@commands.has_permissions(moderate_members=True)
+async def mute(ctx, member: discord.Member, minutes: int, *, reason="Không có lý do"):
+    await member.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=minutes), reason=reason)
+    await ctx.send(f"🔇 Đã mute **{member.mention}** trong {minutes} phút.")
+
+@bot.command(name="unmute")
+@commands.has_permissions(moderate_members=True)
+async def unmute(ctx, member: discord.Member, *, reason="Không có lý do"):
+    await member.timeout(None, reason=reason)
+    await ctx.send(f"🔊 Đã unmute **{member.mention}**.")
+
+@bot.command(name="afk")
+async def afk(ctx, *, reason="Bận"):
+    afk_users[ctx.author.id] = reason
+    await ctx.send(f"💤 {ctx.author.mention} đã bật chế độ AFK.")
+
+
+@bot.tree.command(name="setupstats", description="Tạo kênh thống kê server (Admin)")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setupstats(interaction: discord.Interaction):
+    guild = interaction.guild
+    await interaction.response.defer(ephemeral=True)
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(
+            connect=False,
+            view_channel=True
+        )
+    }
+
+    # Xóa category thống kê cũ nếu có để tránh tạo trùng
+    old_category = discord.utils.get(guild.categories, name="📊 THỐNG KÊ")
+    if old_category:
+        for channel in list(old_category.channels):
+            await channel.delete(reason="Cập nhật hệ thống thống kê")
+        await old_category.delete(reason="Cập nhật hệ thống thống kê")
+
+    category = await guild.create_category("📊 THỐNG KÊ", overwrites=overwrites)
+
+    members = [m for m in guild.members if not m.bot]
+    bots = [m for m in guild.members if m.bot]
+    total = len(guild.members)
+    online = sum(1 for m in guild.members if m.status != discord.Status.offline)
+    boost = guild.premium_subscription_count
+
+    c_member = await guild.create_voice_channel(f"👤 Member: {len(members)}", category=category)
+    c_bot = await guild.create_voice_channel(f"🤖 Bot: {len(bots)}", category=category)
+    c_total = await guild.create_voice_channel(f"👥 Tổng: {total}", category=category)
+    c_online = await guild.create_voice_channel(f"🟢 Online: {online}", category=category)
+    c_boost = await guild.create_voice_channel(f"💎 Boost: {boost}", category=category)
+
+    server_stats_channels[guild.id] = {
+        "member_id": c_member.id,
+        "bot_id": c_bot.id,
+        "total_id": c_total.id,
+        "online_id": c_online.id,
+        "boost_id": c_boost.id
+    }
+
+    await interaction.followup.send(
+        "✅ Đã thiết lập thống kê đầy đủ: Member / Bot / Tổng / Online / Boost.",
+        ephemeral=True
+    )
+
+
+@tasks.loop(minutes=5)
+async def update_stats_loop():
+    for guild in bot.guilds:
+        data = server_stats_channels.get(guild.id)
+        if not data:
+            continue
+
+        members = [m for m in guild.members if not m.bot]
+        bots = [m for m in guild.members if m.bot]
+        total = len(guild.members)
+        online = sum(1 for m in guild.members if m.status != discord.Status.offline)
+        boost = guild.premium_subscription_count
+
+        channels = {
+            "member_id": (f"👤 Member: {len(members)}"),
+            "bot_id": (f"🤖 Bot: {len(bots)}"),
+            "total_id": (f"👥 Tổng: {total}"),
+            "online_id": (f"🟢 Online: {online}"),
+            "boost_id": (f"💎 Boost: {boost}")
+        }
+
+        for key, name in channels.items():
+            channel = guild.get_channel(data.get(key))
+            if channel:
+                try:
+                    await channel.edit(name=name)
+                except discord.HTTPException:
+                    pass
+
+
+@tasks.loop(minutes=5)
+async def update_stats_loop():
+    for guild in bot.guilds:
+        if guild.id in server_stats_channels:
+            data = server_stats_channels[guild.id]
+            c_total = guild.get_channel(data["total_id"])
+            c_online = guild.get_channel(data["online_id"])
+            c_boost = guild.get_channel(data["boost_id"])
+
+            if c_total:
+                await c_total.edit(name=f"👥 Tổng: {guild.member_count}")
+            if c_online:
+                await c_online.edit(name=f"🟢 Online: {sum(1 for m in guild.members if m.status != discord.Status.offline)}")
+            if c_boost:
+                await c_boost.edit(name=f"💎 Boost: {guild.premium_subscription_count}")
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    if WELCOME_CONFIG["channel_id"]:
+        channel = member.guild.get_channel(WELCOME_CONFIG["channel_id"])
+        if channel:
+            msg = WELCOME_CONFIG["message"].format(member=member.mention, name=member.display_name, number=member.guild.member_count, server=member.guild.name)
+            embed = discord.Embed(description=msg, color=discord.Color.blurple())
+            embed.set_footer(text=FOOTER_AUTHOR)
+            
+            if os.path.exists(WELCOME_CONFIG["gif_path"]):
+                file = discord.File(WELCOME_CONFIG["gif_path"], filename="welcome_gif.gif")
+                embed.set_thumbnail(url="attachment://welcome_gif.gif")
+                await channel.send(embed=embed, file=file)
+            else:
+                await channel.send(embed=embed)
+
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    if before.premium_since is None and after.premium_since is not None:
+        guild_id = after.guild.id
+        
+        db_cursor.execute("SELECT role_id FROM server_boost_roles WHERE guild_id = ?", (guild_id,))
+        role_data = db_cursor.fetchone()
+        if role_data:
+            role = after.guild.get_role(role_data[0])
+            if role:
+                try:
+                    await after.add_roles(role)
+                except:
+                    pass
+
+        channel_id = server_boost_channels.get(guild_id)
+        if channel_id:
+            channel = after.guild.get_channel(channel_id)
+            if channel:
+                msg = BOOST_CONFIG["message"].format(member=after.mention, server=after.guild.name)
+                embed = discord.Embed(description=msg, color=discord.Color.from_rgb(255, 115, 250))
+                embed.set_footer(text=FOOTER_AUTHOR)
+                
+                if os.path.exists("boost_gif.gif"):
+                    file = discord.File("boost_gif.gif", filename="boost_gif.gif")
+                    embed.set_thumbnail(url="attachment://boost_gif.gif")
+                    await channel.send(embed=embed, file=file)
+                else:
+                    await channel.send(embed=embed)
+
+
+@bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
@@ -624,118 +1264,6 @@ async def on_message(message: discord.Message):
     await bot.process_commands(message)
 
 
-@bot.tree.command(name="binhchon", description="Mở form tạo bảng bình chọn (Admin)")
-@discord.app_commands.checks.has_permissions(administrator=True)
-async def binhchon(interaction: discord.Interaction):
-    if not isinstance(interaction.channel, discord.TextChannel):
-        await interaction.response.send_message("❌ Lệnh này chỉ dùng được trong kênh text!", ephemeral=True)
-        return
-    await interaction.response.send_modal(PollModal(interaction.channel))
-
-
-@bot.tree.command(name="xembinhchon", description="Xem kết quả bình chọn (Admin)")
-@discord.app_commands.describe(message_id="ID tin nhắn của bảng bình chọn")
-@discord.app_commands.checks.has_permissions(administrator=True)
-async def xembinhchon(interaction: discord.Interaction, message_id: str):
-    try:
-        poll_id = int(message_id)
-    except ValueError:
-        await interaction.response.send_message("❌ Message ID không hợp lệ!", ephemeral=True)
-        return
-
-    db_cursor.execute("SELECT channel_id, options, question FROM polls WHERE message_id = ? AND guild_id = ?", (poll_id, interaction.guild.id))
-    row = db_cursor.fetchone()
-    if not row:
-        await interaction.response.send_message("❌ Không tìm thấy bảng bình chọn này.", ephemeral=True)
-        return
-
-    channel = interaction.guild.get_channel(row[0])
-    if not channel:
-        await interaction.response.send_message("❌ Không tìm thấy kênh chứa bảng bình chọn.", ephemeral=True)
-        return
-
-    try:
-        poll_message = await channel.fetch_message(poll_id)
-    except (discord.NotFound, discord.Forbidden):
-        await interaction.response.send_message("❌ Không thể lấy tin nhắn bình chọn.", ephemeral=True)
-        return
-
-    options = row[1].split("\n")
-    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-    lines = []
-    total = 0
-    counts = []
-    for i, option in enumerate(options):
-        count = 0
-        for reaction in poll_message.reactions:
-            if str(reaction.emoji) == emojis[i]:
-                count = max(reaction.count - 1, 0)
-                break
-        counts.append(count)
-        total += count
-
-    for i, option in enumerate(options):
-        percent = (counts[i] / total * 100) if total else 0
-        bar = "🟦" * min(10, round(percent / 10)) + "⬜" * max(0, 10 - round(percent / 10))
-        lines.append(f"**{i+1}. {option}**\n{bar} **{counts[i]} vote** ({percent:.0f}%)")
-
-    embed = discord.Embed(
-        title="📊  KẾT QUẢ BÌNH CHỌN",
-        description=f"## {row[2]}\n\n" + "\n\n".join(lines),
-        color=discord.Color.green()
-    )
-    embed.set_footer(text=f"Tổng số lượt vote: {total}")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-@bot.tree.command(name="setwelcome", description="Cài đặt welcome và GIF nhỏ (Admin)")
-@discord.app_commands.describe(message="Nội dung", channel="Kênh", gif_file="File GIF")
-@discord.app_commands.checks.has_permissions(administrator=True)
-async def setwelcome(interaction: discord.Interaction, message: str, channel: discord.TextChannel, gif_file: discord.Attachment = None):
-    WELCOME_CONFIG["channel_id"] = channel.id
-    WELCOME_CONFIG["message"] = message
-
-    if gif_file:
-        await gif_file.save("welcome_gif.gif")
-        WELCOME_CONFIG["gif_path"] = "welcome_gif.gif"
-
-    await interaction.response.send_message("✅ Đã cập nhật cấu hình Welcome!", ephemeral=True)
-
-
-@bot.tree.command(name="setboost", description="Cài đặt thông báo Boost (Admin)")
-@discord.app_commands.describe(channel="Kênh", message="Nội dung")
-@discord.app_commands.checks.has_permissions(administrator=True)
-async def setboost(interaction: discord.Interaction, channel: discord.TextChannel, message: str):
-    server_boost_channels[interaction.guild.id] = channel.id
-    BOOST_CONFIG["message"] = message
-    await interaction.response.send_message("✅ Đã cập nhật cấu hình Boost!", ephemeral=True)
-
-
-@bot.tree.command(name="setboostrole", description="Cài đặt role khi Boost (Admin)")
-@discord.app_commands.checks.has_permissions(administrator=True)
-async def setboostrole(interaction: discord.Interaction, role: discord.Role):
-    db_cursor.execute("""
-        INSERT INTO server_boost_roles (guild_id, role_id) 
-        VALUES (?, ?) 
-        ON CONFLICT(guild_id) DO UPDATE SET role_id = ?
-    """, (interaction.guild.id, role.id, role.id))
-    db_conn.commit()
-    await interaction.response.send_message(f"✅ Đã thiết lập Role Boost: {role.mention}", ephemeral=True)
-
-
-@bot.tree.command(name="setannouncement", description="Thiết lập kênh thông báo (Admin)")
-@discord.app_commands.describe(channel="Kênh sẽ nhận thông báo")
-@discord.app_commands.checks.has_permissions(administrator=True)
-async def setannouncement(interaction: discord.Interaction, channel: discord.TextChannel):
-    db_cursor.execute("""
-        INSERT INTO announcement_channels (guild_id, channel_id)
-        VALUES (?, ?)
-        ON CONFLICT(guild_id) DO UPDATE SET channel_id = ?
-    """, (interaction.guild.id, channel.id, channel.id))
-    db_conn.commit()
-    await interaction.response.send_message(
-        f"✅ Đã đặt {channel.mention} làm kênh thông báo!", ephemeral=True
-    )
 
 
 class QRBankModal(discord.ui.Modal, title="🏦 Tạo mã QR ngân hàng"):
@@ -746,31 +1274,19 @@ class QRBankModal(discord.ui.Modal, title="🏦 Tạo mã QR ngân hàng"):
     content = discord.ui.TextInput(label="Nội dung chuyển khoản", placeholder="Ví dụ: Nap tien", required=False, max_length=50)
 
     async def on_submit(self, interaction: discord.Interaction):
-        try:
-            amount_value = int(self.amount.value.strip().replace(",", "").replace(".", ""))
+        try: amount_value = int(self.amount.value.strip().replace(",", "").replace(".", ""))
         except ValueError:
-            await interaction.response.send_message("❌ Số tiền phải là số hợp lệ!", ephemeral=True)
-            return
+            await interaction.response.send_message("❌ Số tiền phải là số hợp lệ!", ephemeral=True); return
         account = self.account.value.strip()
         if not account.isdigit() or not (6 <= len(account) <= 19):
-            await interaction.response.send_message("❌ Số tài khoản phải gồm 6–19 chữ số!", ephemeral=True)
-            return
+            await interaction.response.send_message("❌ Số tài khoản phải gồm 6–19 chữ số!", ephemeral=True); return
         if amount_value < 0:
-            await interaction.response.send_message("❌ Số tiền không được âm!", ephemeral=True)
-            return
-        from urllib.parse import quote
-        qr_url = (
-            f"https://img.vietqr.io/image/{quote(self.bank.value.strip(), safe='')}-{quote(account, safe='')}-compact2.png"
-            f"?amount={amount_value}&addInfo={quote(self.content.value.strip(), safe='')}&accountName={quote(self.account_name.value.strip(), safe='')}"
-        )
-        embed = discord.Embed(title="🏦 MÃ QR CHUYỂN KHOẢN", color=discord.Color.blue())
-        embed.add_field(name="Ngân hàng", value=self.bank.value.strip(), inline=True)
-        embed.add_field(name="Số tài khoản", value=account, inline=True)
-        embed.add_field(name="Chủ tài khoản", value=self.account_name.value.strip(), inline=False)
-        embed.add_field(name="Số tiền", value=f"{amount_value:,} VNĐ", inline=True)
-        embed.add_field(name="Nội dung", value=self.content.value.strip() or "Không cố định", inline=True)
-        embed.set_image(url=qr_url)
-        embed.set_footer(text="VietQR • Quét mã để chuyển khoản")
+            await interaction.response.send_message("❌ Số tiền không được âm!", ephemeral=True); return
+        qr_url=(f"https://img.vietqr.io/image/{urllib.parse.quote(self.bank.value.strip(), safe='')}-{urllib.parse.quote(account, safe='')}-compact2.png" f"?amount={amount_value}&addInfo={urllib.parse.quote(self.content.value.strip(), safe='')}&accountName={urllib.parse.quote(self.account_name.value.strip(), safe='')}")
+        embed=discord.Embed(title="🏦 MÃ QR CHUYỂN KHOẢN", color=discord.Color.blue())
+        embed.add_field(name="Ngân hàng", value=self.bank.value.strip(), inline=True); embed.add_field(name="Số tài khoản", value=account, inline=True)
+        embed.add_field(name="Chủ tài khoản", value=self.account_name.value.strip(), inline=False); embed.add_field(name="Số tiền", value=f"{amount_value:,} VNĐ", inline=True)
+        embed.add_field(name="Nội dung", value=self.content.value.strip() or "Không cố định", inline=True); embed.set_image(url=qr_url); embed.set_footer(text="VietQR • Quét mã để chuyển khoản")
         await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="taoqr", description="Mở bảng nhập để tạo mã QR chuyển khoản ngân hàng")
