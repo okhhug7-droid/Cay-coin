@@ -810,7 +810,7 @@ class WelcomeConfigModal(discord.ui.Modal, title="👋 Cài đặt Welcome"):
     )
     gif_path = discord.ui.TextInput(
         label="Tên file GIF (tuỳ chọn)",
-        placeholder="Để trống nếu không đổi GIF",
+        placeholder="Có thể bỏ trống nếu chỉ đổi kênh/nội dung",
         required=False,
         max_length=200
     )
@@ -1578,7 +1578,7 @@ async def on_message(message: discord.Message):
                     error_text = str(e)
 
                     if "429" in error_text or "RESOURCE_EXHAUSTED" in error_text:
-                        reply_text = "💀 thôi t đi ngủ đây mai t sủa =))"
+                        reply_text = "<:dead:1547577908149747732> Địt Mọe ! im cho t còn lọ"
                         break
 
                     if "503" in error_text or "UNAVAILABLE" in error_text:
@@ -1587,17 +1587,19 @@ async def on_message(message: discord.Message):
                     break
 
             if reply_text is None:
-                raise last_error or RuntimeError("Gemini không trả về nội dung.")
+                reply_text = "<:dead:1547577908149747732> Địt Mọe ! im cho t còn lọ"
 
             if len(reply_text) > 2000:
                 reply_text = reply_text[:1997] + "..."
 
             await message.reply(reply_text)
 
-        except Exception as e:
-            await message.reply(
-                f"⚠️ Đã có lỗi xảy ra khi gọi Gemini AI: `{e}`"
-            )
+        except Exception:
+            # Gemini/API không dùng được thì vẫn trả lời bằng câu fallback.
+            try:
+                await message.reply("<:dead:1547577908149747732> Địt Mọe ! im cho t còn lọ")
+            except Exception:
+                pass
 
         finally:
             # Trả lời xong hoặc lỗi thì gỡ emoji khỏi tin nhắn người dùng.
@@ -1946,25 +1948,27 @@ async def taoqr(interaction: discord.Interaction):
 
 # ========================= MA SÓI =========================
 MASOI_ROLE_INFO = {
-    "Dân Làng": ("🏘️ Phe Dân Làng", "Không có kỹ năng đặc biệt. Ban ngày thảo luận và bỏ phiếu tìm Ma Sói."),
-    "Tiên Tri": ("🔮 Phe Dân Làng", "Mỗi đêm soi 1 người để biết người đó có phải Ma Sói hay không."),
-    "Phù Thủy": ("🧙 Phe Dân Làng", "Có 1 thuốc cứu và 1 thuốc độc. Mỗi loại chỉ dùng một lần trong ván."),
-    "Bảo Vệ": ("🛡️ Phe Dân Làng", "Mỗi đêm bảo vệ 1 người khỏi bị Ma Sói cắn; tùy luật có thể bảo vệ chính mình."),
-    "Thợ Săn": ("🏹 Phe Dân Làng", "Khi chết có thể chọn 1 người để bắn chết."),
-    "Cupid": ("💘 Phe Dân Làng", "Đầu game ghép 2 người thành một cặp tình yêu; một người chết thì người còn lại chết theo."),
-    "Trưởng Làng": ("👴 Phe Dân Làng", "Phiếu bầu có trọng số cao hơn theo luật của phòng."),
-    "Thám Tử": ("🕵️ Phe Dân Làng", "Mỗi đêm điều tra để thu thập thông tin về người chơi."),
-    "Sói Thường": ("🐺 Phe Ma Sói", "Mỗi đêm cùng phe Ma Sói chọn 1 người để cắn."),
-    "Sói Alpha": ("👑 Phe Ma Sói", "Ma Sói đặc biệt; tham gia chọn mục tiêu cùng phe Sói."),
-    "Sói Con": ("🐺 Phe Ma Sói", "Ma Sói đặc biệt; khi bị loại có thể tạo lợi thế cho phe Sói theo luật phòng."),
-    "Sói Sát Thủ": ("🔪 Phe Ma Sói", "Ma Sói đặc biệt có khả năng hạ mục tiêu theo luật phòng."),
-    "Kẻ Khờ": ("🤡 Phe Đặc Biệt", "Nếu bị dân làng bỏ phiếu loại, có thể thắng riêng tùy luật phòng."),
+    "Dân Làng": ("<:lang:1547587120825372752> Phe Dân Làng", "Không có kỹ năng đặc biệt."),
+    "Tiên Tri": ("<:lang:1547587120825372752> Phe Dân Làng", "Mỗi đêm soi 1 người để biết có phải Ma Sói hay không."),
+    "Bảo Vệ": ("<:lang:1547587120825372752> Phe Dân Làng", "Mỗi đêm bảo vệ 1 người khỏi Ma Sói."),
+    "Thợ Săn": ("<:lang:1547587120825372752> Phe Dân Làng", "Vai đặc biệt của phe Dân."),
+    "Cupid": ("<:lang:1547587120825372752> Phe Dân Làng", "Ghép 2 người thành cặp tình yêu."),
+    "Sói Thường": ("<:werewolf:1547564934299390082> Phe Ma Sói", "Cùng phe Sói chọn người để cắn mỗi đêm."),
+    "Sói Alpha": ("<:werewolf:1547564934299390082> Phe Ma Sói", "Sói đặc biệt."),
+    "Sói Con": ("<:werewolf:1547564934299390082> Phe Ma Sói", "Sói đặc biệt, có cơ chế riêng khi bị loại."),
+    "Sói Sát Thủ": ("<:werewolf:1547564934299390082> Phe Ma Sói", "Sói đặc biệt có khả năng hạ mục tiêu."),
 }
 
 MASOI_ROLE_EMOJI = {
-    "Dân Làng":"🏘️", "Tiên Tri":"🔮", "Phù Thủy":"🧙", "Bảo Vệ":"🛡️",
-    "Thợ Săn":"🏹", "Cupid":"💘", "Trưởng Làng":"👴", "Thám Tử":"🕵️",
-    "Sói Thường":"🐺", "Sói Alpha":"👑", "Sói Con":"🐺", "Sói Sát Thủ":"🔪", "Kẻ Khờ":"🤡"
+    "Dân Làng": "<:villagers:1547581626379403355>",
+    "Tiên Tri": "<:prophesy:1547582737601404970>",
+    "Bảo Vệ": "<:protect:1547583282034770000>",
+    "Thợ Săn": "<:hunter:1547584512119021588>",
+    "Cupid": "<:Cupid:1547584816461906024>",
+    "Sói Thường": "<:codoc:1547585598058008576>",
+    "Sói Alpha": "<:alpha:1547585783517675623>",
+    "Sói Con": "<:tuat:1547586268412510229>",
+    "Sói Sát Thủ": "<:wolf:1547585086872887376>",
 }
 
 MASOI_ROOMS = {}
@@ -1999,84 +2003,29 @@ async def masoi_finish_game(room, winner):
 
 
 def masoi_roles_for_count(n):
-    # Luôn có dân làng và đủ sói để game 6-25 người chơi được.
     wolf_count = 2 if n <= 8 else 3 if n <= 12 else 4 if n <= 16 else 5 if n <= 20 else 6
     special = []
-    if n >= 6: special += ["Tiên Tri", "Bảo Vệ"]
-    if n >= 8: special += ["Phù Thủy"]
-    if n >= 10: special += ["Thợ Săn", "Cupid"]
-    if n >= 13: special += ["Thám Tử", "Trưởng Làng"]
-    if n >= 16: special += ["Sói Alpha"]
-    if n >= 19: special += ["Sói Con"]
-    if n >= 22: special += ["Sói Sát Thủ", "Kẻ Khờ"]
+    if n >= 6:
+        special += ["Tiên Tri", "Bảo Vệ"]
+    if n >= 10:
+        special += ["Thợ Săn", "Cupid"]
+    if n >= 16:
+        special += ["Sói Alpha"]
+    if n >= 19:
+        special += ["Sói Con"]
+    if n >= 22:
+        special += ["Sói Sát Thủ"]
     wolves = ["Sói Thường"] * wolf_count
     if "Sói Alpha" in special:
-        wolves[0] = "Sói Alpha"
-        special.remove("Sói Alpha")
+        wolves[0] = "Sói Alpha"; special.remove("Sói Alpha")
     if "Sói Con" in special:
-        wolves[1 if len(wolves) > 1 else 0] = "Sói Con"
-        special.remove("Sói Con")
+        wolves[1 if len(wolves) > 1 else 0] = "Sói Con"; special.remove("Sói Con")
     if "Sói Sát Thủ" in special:
-        wolves[2 if len(wolves) > 2 else 0] = "Sói Sát Thủ"
-        special.remove("Sói Sát Thủ")
+        wolves[2 if len(wolves) > 2 else 0] = "Sói Sát Thủ"; special.remove("Sói Sát Thủ")
     roles = wolves + special
     while len(roles) < n:
         roles.append("Dân Làng")
     return roles[:n]
-
-
-class MasoiCreateModal(discord.ui.Modal, title="🐺 TẠO PHÒNG MA SÓI"):
-    room_name = discord.ui.TextInput(
-        label="Tên phòng",
-        placeholder="Ví dụ: Ma Sói Cuối Tuần",
-        max_length=60,
-        required=True
-    )
-    max_players = discord.ui.TextInput(
-        label="Số người tối đa (6-25)",
-        placeholder="Ví dụ: 15",
-        max_length=2,
-        required=True
-    )
-    password = discord.ui.TextInput(
-        label="Mật khẩu phòng (không bắt buộc)",
-        placeholder="Để trống nếu không cần",
-        max_length=30,
-        required=False
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            max_players = int(self.max_players.value.strip())
-        except ValueError:
-            return await interaction.response.send_message("❌ Số người phải là số từ **6 đến 25**.", ephemeral=True)
-        if not 6 <= max_players <= 25:
-            return await interaction.response.send_message("❌ Số người tối đa phải từ **6 đến 25**.", ephemeral=True)
-
-        room_id = f"{interaction.guild_id}_{interaction.channel_id}_{interaction.id}"
-        MASOI_ROOMS[room_id] = {
-            "guild_id": interaction.guild_id,
-            "channel_id": interaction.channel_id,
-            "host": interaction.user.id,
-            "players": [interaction.user.id],
-            "started": False,
-            "roles": {},
-            "room_name": self.room_name.value.strip(),
-            "max_players": max_players,
-            "password": self.password.value.strip() or None,
-            "chat_locked": False,
-            "phase": "lobby",
-            "actions": {},
-            "dead": [],
-            "game_finished": False,
-            "winner": None,
-        }
-        room = MASOI_ROOMS[room_id]
-        embed = masoi_lobby_embed(room)
-        embed.title = f"🐺 {room['room_name'].upper()}"
-        embed.set_author(name=f"Phòng Ma Sói • {interaction.user.display_name}")
-        await interaction.response.send_message(embed=embed, view=MasoiJoinView(room_id))
-
 
 async def masoi_set_chat_lock(room, locked: bool):
     guild = bot.get_guild(room["guild_id"])
@@ -2186,6 +2135,45 @@ async def masoi_resolve_night(room):
     return {"victim_id": victim_id, "victim_name": victim_name, "ok": ok, "err": err, "votes": votes.get(victim_id, 0)}
 
 
+def masoi_status_embed(room):
+    """Bảng trạng thái sống/chết được gửi mỗi khi trời sáng."""
+    guild = bot.get_guild(room.get("guild_id"))
+    dead = set(room.get("dead", []))
+    players = room.get("players", [])
+
+    alive_lines = []
+    dead_lines = []
+
+    for index, uid in enumerate(players, 1):
+        member = guild.get_member(uid) if guild else None
+        mention = member.mention if member else f"<@{uid}>"
+        if uid in dead:
+            dead_lines.append(f"<:dead:1547577908149747732> {mention}")
+        else:
+            alive_lines.append(f"<:member:1547566263381794846>{mention}")
+
+    alive_text = "\n".join(alive_lines) if alive_lines else "Không còn người sống"
+    dead_text = "\n".join(dead_lines) if dead_lines else "Chưa có người chết"
+
+    embed = discord.Embed(
+        title="☀️ THÔNG BÁO BUỔI SÁNG",
+        description="Danh sách người chơi sau đêm vừa qua:",
+        color=discord.Color.gold()
+    )
+    embed.add_field(
+        name=f"<:banlmjdctoi:1506650381688766564> NGƯỜI CÒN SỐNG • {len(alive_lines)}",
+        value=alive_text[:1024],
+        inline=False
+    )
+    embed.add_field(
+        name=f"<:emoji_38:1532983692237078548>NGƯỜI ĐÃ CHẾT • {len(dead_lines)}",
+        value=dead_text[:1024],
+        inline=False
+    )
+    embed.set_footer(text="Ma Sói • Trạng thái được cập nhật sau mỗi sáng")
+    return embed
+
+
 async def masoi_phase_timer(room_id, phase, seconds):
     """Tự động chuyển Ngày/Đêm: đêm 2 phút, ngày 5 phút."""
     try:
@@ -2218,13 +2206,13 @@ async def masoi_phase_timer(room_id, phase, seconds):
                         member = guild.get_member(uid) if guild else None
                         names.append(member.mention if member else f"<@{uid}>")
 
+                winner_lines = [f"<:member:1547566263381794846>{name}" for name in names[:25]]
                 embed = discord.Embed(
-                    title=f"🏆 {emoji} PHE {winner.upper()} THẮNG!",
                     description=(
-                        "### 🎉 Ván Ma Sói đã kết thúc!\n\n"
-                        + ("**Người thắng:**\n" + "\n".join(names[:25]) if names else "")
+                        "<a:chcmng:1547243888639615097> chúc mừng các member chiến thắng<a:699660goldcrown:1547563982393450556>\n"
+                        + ("\n".join(winner_lines) if winner_lines else "")
                     ),
-                    color=discord.Color.gold()
+                    color=discord.Color.from_rgb(0, 0, 0)
                 )
                 await channel.send(embed=embed)
             return
@@ -2245,6 +2233,10 @@ async def masoi_phase_timer(room_id, phase, seconds):
                 if not night_result["ok"]:
                     death_embed.add_field(name="⚠️ Lỗi quyền", value=night_result["err"][:1024], inline=False)
                 await channel.send(embed=death_embed)
+
+            # Mỗi lần trời sáng đều gửi một bảng tổng hợp sống/chết.
+            if target_phase == "day":
+                await channel.send(embed=masoi_status_embed(room))
 
             embed = masoi_phase_embed(target_phase)
             embed.title = ("☀️  TRỜI SÁNG!" if target_phase == "day" else "🌙  ĐÊM XUỐNG!")
@@ -2321,11 +2313,9 @@ def masoi_action_label(role, phase):
         return "🗳️ Bỏ phiếu loại người chơi"
     labels = {
         "Tiên Tri": "🔮 Chọn người để soi",
-        "Phù Thủy": "🧪 Chọn hành động thuốc",
         "Bảo Vệ": "🛡️ Chọn người để bảo vệ",
         "Thợ Săn": "🏹 Chọn người để ngắm",
         "Cupid": "💘 Chọn người ghép đôi",
-        "Thám Tử": "🕵️ Chọn người để điều tra",
         "Sói Thường": "🐺 Chọn người để cắn",
         "Sói Alpha": "👑 Chọn người để cắn",
         "Sói Con": "🐺 Chọn người để cắn",
@@ -2431,141 +2421,174 @@ class MasoiRevealRoleButton(discord.ui.Button):
         )
 
 
-class MasoiJoinPasswordModal(discord.ui.Modal, title="🔐 MẬT KHẨU PHÒNG MA SÓI"):
-    password = discord.ui.TextInput(
-        label="Nhập mật khẩu phòng",
-        placeholder="Mật khẩu do chủ phòng cung cấp",
-        max_length=30,
-        required=True
-    )
-
-    def __init__(self, room_id):
-        super().__init__()
-        self.room_id = room_id
-
-    async def on_submit(self, interaction: discord.Interaction):
-        room = MASOI_ROOMS.get(self.room_id)
-        if not room or room.get("started"):
-            return await interaction.response.send_message("❌ Phòng đã bắt đầu hoặc không còn tồn tại.", ephemeral=True)
-        if self.password.value.strip() != room.get("password"):
-            return await interaction.response.send_message("❌ Sai mật khẩu phòng.", ephemeral=True)
-        if interaction.user.id not in room["players"]:
-            room["players"].append(interaction.user.id)
-        await interaction.response.edit_message(embed=masoi_lobby_embed(room), view=MasoiJoinView(self.room_id))
-
-
 class MasoiJoinView(discord.ui.View):
     def __init__(self, room_id):
         super().__init__(timeout=3600)
         self.room_id = room_id
 
-    @discord.ui.button(label="🎮 Tham gia", style=discord.ButtonStyle.success)
+    @discord.ui.button(
+        label="Tham gia",
+        emoji="<:307978amongusstart:1547576622872526938>",
+        style=discord.ButtonStyle.success
+    )
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
         room = MASOI_ROOMS.get(self.room_id)
         if not room or room.get("started"):
-            return await interaction.response.send_message("❌ Phòng đã bắt đầu hoặc không còn tồn tại.", ephemeral=True)
+            return await interaction.response.send_message(
+                "❌ Phòng đã bắt đầu hoặc không còn tồn tại.",
+                ephemeral=True
+            )
+
         if interaction.user.id in room["players"]:
-            return await interaction.response.send_message("✅ Bạn đã tham gia rồi!", ephemeral=True)
+            return await interaction.response.send_message(
+                "✅ Bạn đã tham gia rồi!",
+                ephemeral=True
+            )
+
         if len(room["players"]) >= room.get("max_players", 25):
-            return await interaction.response.send_message(f"❌ Phòng đã đủ {room.get('max_players', 25)} người.", ephemeral=True)
-        if room.get("password"):
-            return await interaction.response.send_modal(MasoiJoinPasswordModal(self.room_id))
+            return await interaction.response.send_message(
+                "❌ Phòng đã đủ người.",
+                ephemeral=True
+            )
+
         room["players"].append(interaction.user.id)
-        await interaction.response.edit_message(embed=masoi_lobby_embed(room), view=self)
+        await interaction.response.edit_message(
+            embed=masoi_lobby_embed(room),
+            view=self
+        )
 
-    @discord.ui.button(label="🔒 Khóa chat", style=discord.ButtonStyle.secondary)
-    async def lock_chat(self, interaction: discord.Interaction, button: discord.ui.Button):
-        room = MASOI_ROOMS.get(self.room_id)
-        if not room:
-            return await interaction.response.send_message("❌ Không tìm thấy phòng.", ephemeral=True)
-        if interaction.user.id != room["host"]:
-            return await interaction.response.send_message("❌ Chỉ chủ phòng mới được khóa chat.", ephemeral=True)
-        ok, err = await masoi_set_chat_lock(room, True)
-        if not ok:
-            return await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-        await interaction.response.send_message("🔒 **Đã khóa chat tất cả người chơi trong phòng.**", ephemeral=True)
-
-    @discord.ui.button(label="🔓 Mở chat", style=discord.ButtonStyle.secondary)
-    async def unlock_chat(self, interaction: discord.Interaction, button: discord.ui.Button):
-        room = MASOI_ROOMS.get(self.room_id)
-        if not room:
-            return await interaction.response.send_message("❌ Không tìm thấy phòng.", ephemeral=True)
-        if interaction.user.id != room["host"]:
-            return await interaction.response.send_message("❌ Chỉ chủ phòng mới được mở chat.", ephemeral=True)
-        ok, err = await masoi_set_chat_lock(room, False)
-        if not ok:
-            return await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-        await interaction.response.send_message("🔓 **Đã mở chat cho người chơi.**", ephemeral=True)
-
-    @discord.ui.button(label="▶️ Bắt đầu chia bài", style=discord.ButtonStyle.primary)
+    @discord.ui.button(
+        label="Bắt đầu chia bài",
+        emoji="<a:werewolf562516:1547493117786329098>",
+        style=discord.ButtonStyle.primary
+    )
     async def start(self, interaction: discord.Interaction, button: discord.ui.Button):
         room = MASOI_ROOMS.get(self.room_id)
         if not room:
-            return await interaction.response.send_message("❌ Không tìm thấy phòng.", ephemeral=True)
+            return await interaction.response.send_message(
+                "❌ Không tìm thấy phòng.",
+                ephemeral=True
+            )
+
         if interaction.user.id != room["host"]:
-            return await interaction.response.send_message("❌ Chỉ chủ phòng mới được bắt đầu.", ephemeral=True)
+            return await interaction.response.send_message(
+                "❌ Chỉ chủ phòng mới được bắt đầu.",
+                ephemeral=True
+            )
+
         n = len(room["players"])
         if n < 6:
-            return await interaction.response.send_message("❌ Cần ít nhất 6 người để bắt đầu.", ephemeral=True)
+            return await interaction.response.send_message(
+                "❌ Cần ít nhất 6 người để bắt đầu.",
+                ephemeral=True
+            )
+
         roles = masoi_roles_for_count(n)
         random.shuffle(roles)
         room["roles"] = dict(zip(room["players"], roles))
         room["started"] = True
         room["phase"] = "night"
-        # Vừa chia bài là bước vào đêm đầu tiên -> khóa chat người chơi.
+
         lock_ok, lock_err = await masoi_set_chat_lock(room, True)
-        room["phase_task"] = asyncio.create_task(masoi_phase_timer(self.room_id, "night", 120))
+        room["phase_task"] = asyncio.create_task(
+            masoi_phase_timer(self.room_id, "night", 120)
+        )
+
         embed = discord.Embed(
             title="🐺  MA SÓI  •  VÁN ĐÃ BẮT ĐẦU",
-            description=("### 🎭 BÀI ĐÃ ĐƯỢC CHIA\n"
-                         "Mỗi người hãy bấm **<a:werewolf562516:1547493117786329098> Xem vai của tôi** để xem vai bí mật.\n\n"
-                         "### 🌙 ĐÊM ĐẦU TIÊN\n"
-                         "Chat đã **khóa**. Đêm kéo dài **2:00** → sau đó tự động chuyển sang **☀️ Ngày 5:00**.\n\n"
-                         "> 🔐 **Tuyệt đối không tiết lộ vai của mình.**"),
+            description=(
+                "### 🎭 BÀI ĐÃ ĐƯỢC CHIA\n"
+                "Mỗi người hãy bấm **<a:werewolf562516:1547493117786329098> Xem vai của tôi** để xem vai bí mật.\n\n"
+                "### 🌙 ĐÊM ĐẦU TIÊN\n"
+                "Chat đã **khóa**. Đêm kéo dài **2:00** → sau đó tự động chuyển sang **☀️ Ngày 5:00**.\n\n"
+                "> 🔐 **Tuyệt đối không tiết lộ vai của mình.**"
+            ),
             color=discord.Color.from_rgb(54, 35, 76)
         )
         embed.add_field(name="👥 Người chơi", value=str(n), inline=True)
-        embed.add_field(name="🐺 Ma Sói", value=str(sum(1 for r in roles if "Sói" in r)), inline=True)
-        embed.add_field(name="🎭 Vai đặc biệt", value=str(sum(1 for r in roles if r not in ("Dân Làng", "Sói Thường"))), inline=True)
-        embed.add_field(name="🌙 Giai đoạn", value="ĐÊM — chat đã khóa" if lock_ok else "⚠️ Đêm nhưng chưa khóa được chat", inline=True)
-        embed.add_field(name="⏱️ Thời gian", value="Đêm: **2 phút** • Ngày: **5 phút** • Tự động chuyển", inline=False)
+        embed.add_field(
+            name="🐺 Ma Sói",
+            value=str(sum(1 for r in roles if "Sói" in r)),
+            inline=True
+        )
+        embed.add_field(
+            name="🎭 Vai đặc biệt",
+            value=str(sum(1 for r in roles if r not in ("Dân Làng", "Sói Thường"))),
+            inline=True
+        )
+        embed.add_field(
+            name="🌙 Giai đoạn",
+            value="ĐÊM — chat đã khóa" if lock_ok else "⚠️ Đêm nhưng chưa khóa được chat",
+            inline=True
+        )
+        embed.add_field(
+            name="⏱️ Thời gian",
+            value="Đêm: **2 phút** • Ngày: **5 phút** • Tự động chuyển",
+            inline=False
+        )
         if lock_err:
             embed.add_field(name="⚠️ Lỗi quyền", value=lock_err[:1024], inline=False)
-        await interaction.response.edit_message(embed=embed, view=MasoiRoleView(self.room_id))
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=MasoiRoleView(self.room_id)
+        )
 
 
 def masoi_lobby_embed(room):
-    players = room["players"]
-    names = []
-    guild = bot.get_guild(room["guild_id"])
+    players = room.get("players", [])
+    guild = bot.get_guild(room.get("guild_id"))
     host_id = room.get("host")
+
+    player_lines = []
     if guild:
         for uid in players:
-            m = guild.get_member(uid)
-            name = m.mention if m else f"<@{uid}>"
-            if uid == host_id:
-                name += "  👑"
-            names.append(name)
-    desc = "\n".join(f"`{i:02d}` {x}" for i, x in enumerate(names, 1)) or "*Chưa có ai tham gia.*"
-    count = len(players)
-    maximum = room.get("max_players", 25)
-    progress = "🟩" * min(10, round(count / maximum * 10)) + "⬜" * max(0, 10 - min(10, round(count / maximum * 10)))
+            member = guild.get_member(uid)
+            name = member.mention if member else f"<@{uid}>"
+            player_lines.append(name + ("  <a:699660goldcrown:1547563982393450556>" if uid == host_id else ""))
+
+    player_text = "\n".join(player_lines) if player_lines else "Chưa có người chơi"
+
     embed = discord.Embed(
-        title=f"🐺  {room.get('room_name', 'PHÒNG MA SÓI').upper()}",
-        description="### 🎮 SẢNH CHỜ\n" + desc,
+        title="Phòng Ma Sói • <:werewolf:1547564934299390082>",
+        description=(
+            "Room:\n\n"
+            "<:member:1547566263381794846>Người chơi\n"
+            f"{player_text}\n\n"
+            "🌙 Khi bắt đầu\n"
+            "Đêm 2:00 → Ngày 5:00 → tự động lặp"
+        ),
         color=discord.Color.from_rgb(88, 61, 122)
     )
-    embed.add_field(name="👥 Người chơi", value=f"**{count} / {maximum}**\n{progress}", inline=True)
-    embed.add_field(name="👑 Chủ phòng", value=f"<@{host_id}>", inline=True)
-    embed.add_field(name="🎯 Điều kiện", value="Tối thiểu **6 người**", inline=True)
-    embed.add_field(name="🌙 Khi bắt đầu", value="Đêm **2:00** → Ngày **5:00** → tự động lặp", inline=False)
-    embed.set_footer(text="🐺 Ma Sói • Chủ phòng bấm ▶️ Bắt đầu chia bài khi đủ người")
     return embed
 
 
-@bot.tree.command(name="masoi", description="Tạo phòng Ma Sói 6-25 người")
+@bot.tree.command(name="masoi", description="Tạo phòng Ma Sói")
 async def masoi_command(interaction: discord.Interaction):
-    await interaction.response.send_modal(MasoiCreateModal())
+    room_id = f"{interaction.guild_id}_{interaction.channel_id}_{interaction.id}"
+    MASOI_ROOMS[room_id] = {
+        "guild_id": interaction.guild_id,
+        "channel_id": interaction.channel_id,
+        "host": interaction.user.id,
+        "players": [interaction.user.id],
+        "started": False,
+        "roles": {},
+        "room_name": "Room",
+        "max_players": 25,
+        "chat_locked": False,
+        "phase": "lobby",
+        "actions": {},
+        "dead": [],
+        "game_finished": False,
+        "winner": None,
+    }
+
+    room = MASOI_ROOMS[room_id]
+    embed = masoi_lobby_embed(room)
+    await interaction.response.send_message(
+        embed=embed,
+        view=MasoiJoinView(room_id)
+    )
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 if __name__ == "__main__":
