@@ -810,7 +810,7 @@ class WelcomeConfigModal(discord.ui.Modal, title="👋 Cài đặt Welcome"):
     )
     gif_path = discord.ui.TextInput(
         label="Tên file GIF (tuỳ chọn)",
-        placeholder="welcome_gif.gif",
+        placeholder="Để trống nếu không đổi GIF",
         required=False,
         max_length=200
     )
@@ -863,6 +863,59 @@ class WelcomeConfigModal(discord.ui.Modal, title="👋 Cài đặt Welcome"):
             f"🎞️ GIF: `{gif_path or 'welcome_gif.gif'}`",
             ephemeral=True
         )
+
+
+@bot.tree.command(
+    name="setwelcomegif",
+    description="Chọn và tải GIF Welcome từ máy tính (Admin)"
+)
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setwelcomegif(interaction: discord.Interaction, gif_file: discord.Attachment):
+    if not gif_file.filename.lower().endswith(".gif"):
+        await interaction.response.send_message(
+            "❌ Vui lòng chọn đúng file **.gif**.",
+            ephemeral=True
+        )
+        return
+
+    await gif_file.save("welcome_gif.gif")
+
+    db_cursor.execute(
+        "SELECT channel_id, message FROM welcome_config WHERE guild_id = ?",
+        (interaction.guild.id,)
+    )
+    row = db_cursor.fetchone()
+
+    if row:
+        db_cursor.execute(
+            """
+            UPDATE welcome_config
+            SET gif_path = ?
+            WHERE guild_id = ?
+            """,
+            ("welcome_gif.gif", interaction.guild.id)
+        )
+    else:
+        db_cursor.execute(
+            """
+            INSERT INTO welcome_config (guild_id, channel_id, message, gif_path)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                interaction.guild.id,
+                WELCOME_CONFIG.get("channel_id"),
+                WELCOME_CONFIG.get("message", ""),
+                "welcome_gif.gif"
+            )
+        )
+    db_conn.commit()
+
+    WELCOME_CONFIG["gif_path"] = "welcome_gif.gif"
+
+    await interaction.response.send_message(
+        f"✅ Đã cập nhật GIF Welcome: `{gif_file.filename}`",
+        ephemeral=True
+    )
 
 
 @bot.tree.command(
@@ -1181,102 +1234,6 @@ async def unmute(ctx, member: discord.Member, *, reason="Không có lý do"):
     await ctx.send(f"🔊 Đã unmute **{member.mention}**.")
 
 @bot.tree.command(
-    name="setnhanrole",
-    description="Cài nhiều Role tự nhận và nội dung thông báo (Admin)"
-)
-@discord.app_commands.describe(
-    role_ids="Nhiều ID Role, ngăn cách bằng dấu phẩy. Ví dụ: 111,222,333",
-    message="Nội dung thông báo. Dùng {member}, {role}, {server}"
-)
-@discord.app_commands.checks.has_permissions(administrator=True)
-async def setnhanrole(
-    interaction: discord.Interaction,
-    role_ids: str,
-    message: str = "✅ {member} đã nhận Role {role}!"
-):
-    try:
-        parsed_ids = [
-            int(x.strip())
-            for x in role_ids.replace(" ", "").split(",")
-            if x.strip()
-        ]
-    except ValueError:
-        await interaction.response.send_message(
-            "❌ Danh sách Role ID không hợp lệ. Ví dụ: `123,456,789`",
-            ephemeral=True
-        )
-        return
-
-    parsed_ids = list(dict.fromkeys(parsed_ids))
-    if not parsed_ids or len(parsed_ids) > 10:
-        await interaction.response.send_message(
-            "❌ Hãy nhập từ 1 đến 10 Role ID.",
-            ephemeral=True
-        )
-        return
-
-    roles = []
-    me = interaction.guild.me or interaction.guild.get_member(bot.user.id)
-
-    if me is None:
-        await interaction.response.send_message(
-            "❌ Không xác định được quyền của bot.",
-            ephemeral=True
-        )
-        return
-
-    for role_id in parsed_ids:
-        role = interaction.guild.get_role(role_id)
-
-        if not role:
-            await interaction.response.send_message(
-                f"❌ Không tìm thấy Role có ID `{role_id}`.",
-                ephemeral=True
-            )
-            return
-
-        if role.is_default() or role.managed:
-            await interaction.response.send_message(
-                f"❌ Role `{role.name}` không thể dùng làm Role tự nhận.",
-                ephemeral=True
-            )
-            return
-
-        if role >= me.top_role:
-            await interaction.response.send_message(
-                f"❌ Role {role.mention} phải thấp hơn Role cao nhất của bot.",
-                ephemeral=True
-            )
-            return
-
-        roles.append(role)
-
-    role_ids_text = ",".join(str(role.id) for role in roles)
-
-    # DB cũ có thể vẫn còn cột channel_id; không cần sử dụng cột đó nữa.
-    db_cursor.execute(
-        """
-        INSERT INTO self_role_config (guild_id, role_ids, message)
-        VALUES (?, ?, ?)
-        ON CONFLICT(guild_id) DO UPDATE SET
-            role_ids = excluded.role_ids,
-            message = excluded.message
-        """,
-        (interaction.guild.id, role_ids_text, message)
-    )
-    db_conn.commit()
-
-    role_text = ", ".join(role.mention for role in roles)
-
-    await interaction.response.send_message(
-        f"✅ Đã cài {len(roles)} Role tự nhận: {role_text}\n"
-        f"📝 Nội dung: {message}\n"
-        f"📢 Khi có người nhận Role, bot sẽ thông báo tại kênh đang dùng `/nhanrole`.",
-        ephemeral=True
-    )
-
-
-@bot.tree.command(
     name="nhanrole",
     description="Nhận các Role tự nhận đã được Admin cài"
 )
@@ -1298,7 +1255,7 @@ async def nhanrole(interaction: discord.Interaction):
 
     if not config:
         await interaction.response.send_message(
-            "❌ Server chưa cài Role tự nhận. Admin dùng `/setnhanrole` trước.",
+            "❌ Server chưa cài Role tự nhận. Admin chưa cài Role tự nhận.",
             ephemeral=True
         )
         return
@@ -1313,7 +1270,7 @@ async def nhanrole(interaction: discord.Interaction):
         ]
     except ValueError:
         await interaction.response.send_message(
-            "❌ Cấu hình Role tự nhận bị lỗi. Admin hãy chạy lại `/setnhanrole`.",
+            "❌ Cấu hình Role tự nhận bị lỗi. Admin hãy kiểm tra lại cấu hình Role tự nhận.",
             ephemeral=True
         )
         return
