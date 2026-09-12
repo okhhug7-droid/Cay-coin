@@ -821,7 +821,7 @@ class WelcomeConfigModal(discord.ui.Modal, title="👋 Cài đặt Welcome"):
         WELCOME_CONFIG["gif_path"] = gif_path or "welcome_gif.gif"
 
         await interaction.response.send_message(
-            f"✅ Đã cài Welcome!\n"
+            f"<a:verify:1548178353859596320> Đã cài Welcome!\n"
             f"📢 Kênh: {channel.mention}\n"
             f"🎞️ GIF: `{gif_path or 'welcome_gif.gif'}`",
             ephemeral=True
@@ -900,7 +900,7 @@ async def setwelcome(
     WELCOME_CONFIG["gif_path"] = saved_gif or "welcome_gif.gif"
 
     embed = make_embed(
-        title="✅ ĐÃ CÀI WELCOME",
+        title="<a:verify:1548178353859596320> ĐÃ CÀI WELCOME",
         color=discord.Color.green()
     )
     embed.add_field(name="📢 Kênh", value=channel.mention, inline=False)
@@ -961,7 +961,7 @@ async def setannouncement(interaction: discord.Interaction, channel: discord.Tex
     """, (interaction.guild.id, channel.id, channel.id))
     db_conn.commit()
     await interaction.response.send_message(
-        f"✅ Đã đặt {channel.mention} làm kênh thông báo!", ephemeral=True
+        f"<a:verify:1548178353859596320> Đã đặt {channel.mention} làm kênh thông báo!", ephemeral=True
     )
 
 
@@ -1072,7 +1072,7 @@ class AnnouncementModal(discord.ui.Modal, title="📢 TẠO THÔNG BÁO PRO"):
             if question:
                 if not hasattr(discord, "Poll"):
                     await interaction.response.send_message(
-                        "✅ Đã gửi thông báo, nhưng Discord.py hiện tại chưa hỗ trợ bình chọn native.",
+                        "<a:verify:1548178353859596320> Đã gửi thông báo, nhưng Discord.py hiện tại chưa hỗ trợ bình chọn native.",
                         ephemeral=True,
                     )
                     return
@@ -1086,7 +1086,7 @@ class AnnouncementModal(discord.ui.Modal, title="📢 TẠO THÔNG BÁO PRO"):
                 await channel.send(poll=poll)
 
             await interaction.response.send_message(
-                f"✅ Đã gửi thông báo thành công vào {channel.mention}"
+                f"<a:verify:1548178353859596320> Đã gửi thông báo thành công vào {channel.mention}"
                 + (" kèm bình chọn." if question else "."),
                 ephemeral=True,
             )
@@ -1194,26 +1194,26 @@ async def checktreocall(ctx):
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason="Không có lý do"):
     await member.ban(reason=reason)
-    await ctx.send(f"🔨 Đã ban **{member.mention}**.")
+    await ctx.send(f"<a:bye:1548151079018172486> Đã ban **{member}**.")
 
 @bot.command(name="unban")
 @commands.has_permissions(ban_members=True)
 async def unban(ctx, user_id: int, *, reason="Không có lý do"):
     user = await bot.fetch_user(user_id)
     await ctx.guild.unban(user, reason=reason)
-    await ctx.send(f"🔓 Đã unban thành công.")
+    await ctx.send(f"<a:chcmng:1547243888639615097> Đã mở được ban.")
 
 @bot.command(name="mute")
 @commands.has_permissions(moderate_members=True)
 async def mute(ctx, member: discord.Member, minutes: int, *, reason="Không có lý do"):
     await member.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=minutes), reason=reason)
-    await ctx.send(f"🔇 Đã mute **{member.mention}** trong {minutes} phút.")
+    await ctx.send(f"<:immom:1506650421677260901> Dã khóa mõm **{member}** trong {minutes} phút.")
 
 @bot.command(name="unmute")
 @commands.has_permissions(moderate_members=True)
 async def unmute(ctx, member: discord.Member, *, reason="Không có lý do"):
     await member.timeout(None, reason=reason)
-    await ctx.send(f"🔊 Đã unmute **{member.mention}**.")
+    await ctx.send(f"<a:chcmng:1547243888639615097> **{member}** Đã được mở lại mõm.")
 
 class NhanRoleModal(discord.ui.Modal, title="🎭 NHẬN ROLE"):
     role_id = discord.ui.TextInput(
@@ -1320,7 +1320,7 @@ async def afk(ctx, *, reason="Bận"):
         "guild_id": ctx.guild.id if ctx.guild else None,
     }
     await ctx.send(
-        f"💤 **{ctx.author.display_name}** đã bật AFK.\n"
+        f"<a:bye:1548151079018172486> **{ctx.author.display_name}** đã bật AFK.\n"
         f"📝 Lý do: **{afk_users[ctx.author.id]['reason']}**"
     )
 
@@ -1338,7 +1338,7 @@ async def handle_afk_message(message: discord.Message):
         afk_users.pop(message.author.id, None)
         try:
             await message.channel.send(
-                f"👋 **{message.author.display_name}** đã quay lại, AFK đã tự tắt."
+                f"<:emoji_21:1508473905499603144> **{message.author.display_name}** đã quay lại, AFK đã tự tắt."
             )
         except discord.HTTPException:
             pass
@@ -1356,7 +1356,7 @@ async def handle_afk_message(message: discord.Message):
 
         reason = data.get("reason", "Bận")
         await message.channel.send(
-            f"💤 **{member.display_name}** đang AFK.\n"
+            f"<a:bye:1548151079018172486> **{member.display_name}** đang AFK.\n"
             f"📝 Lý do: **{reason}**"
         )
 
@@ -1524,7 +1524,7 @@ async def on_member_join(member: discord.Member):
         msg = message_template
 
     embed = make_embed(
-        title="👋 CHÀO MỪNG THÀNH VIÊN MỚI",
+        title="<a:chcmng:1547243888639615097> CHÀO MỪNG THÀNH VIÊN MỚI",
         description=msg,
         color=discord.Color.blurple()
     )
@@ -2361,14 +2361,14 @@ def masoi_action_label(role, phase):
     if phase == "day":
         return "🗳️ Bỏ phiếu loại người chơi"
     labels = {
-        "Tiên Tri": "🔮 Chọn người để soi",
-        "Bảo Vệ": "🛡️ Chọn người để bảo vệ",
-        "Thợ Săn": "🏹 Chọn người để ngắm",
-        "Cupid": "💘 Chọn người ghép đôi",
-        "Sói Thường": "🐺 Chọn người để cắn",
-        "Sói Alpha": "👑 Chọn người để cắn",
-        "Sói Con": "🐺 Chọn người để cắn",
-        "Sói Sát Thủ": "🔪 Chọn người để hạ",
+        "Tiên Tri": "<:prophesy:1547582737601404970> Chọn người để soi",
+        "Bảo Vệ": "<:protect:1547583282034770000> Chọn người để bảo vệ",
+        "Thợ Săn": "<:emoji_75:1547988327104254012> Chọn người để ngắm",
+        "Cupid": "<:Cupid:1547584816461906024> Chọn người ghép đôi",
+        "Sói Thường": "<:codoc:1547585598058008576> Chọn người để cắn",
+        "Sói Alpha": "<:alpha:1547585783517675623> Chọn người để cắn",
+        "Sói Con": "<:emoji_33:1521139800902471782> Chọn người để cắn",
+        "Sói Sát Thủ": "<:wolf:1547585086872887376> Chọn người để hạ",
     }
     return labels.get(role, "🎯 Chọn mục tiêu")
 
@@ -2404,7 +2404,7 @@ class MasoiActionSelect(discord.ui.Select):
         if interaction.user.id not in room.get("roles", {}):
             return await interaction.response.send_message("❌ Bạn không ở trong ván này.", ephemeral=True)
         if interaction.user.id in room.get("dead", []):
-            return await interaction.response.send_message("💀 Bạn đã bị loại khỏi ván.", ephemeral=True)
+            return await interaction.response.send_message("<:dead:1547577908149747732> Bạn đã bị loại khỏi ván.", ephemeral=True)
         if room.get("phase") != self.phase:
             return await interaction.response.send_message("⏰ Giai đoạn đã thay đổi, hãy mở lại bảng chọn.", ephemeral=True)
         if self.values[0] == "none":
@@ -2489,7 +2489,7 @@ class MasoiJoinView(discord.ui.View):
 
         if interaction.user.id in room["players"]:
             return await interaction.response.send_message(
-                "✅ Bạn đã tham gia rồi!",
+                "<a:verify:1548178353859596320> Bạn đã tham gia rồi!",
                 ephemeral=True
             )
 
@@ -2548,7 +2548,7 @@ class MasoiJoinView(discord.ui.View):
                 "### 🎭 BÀI ĐÃ ĐƯỢC CHIA\n"
                 "Mỗi người hãy bấm **<a:werewolf562516:1547493117786329098> Xem vai của tôi** để xem vai bí mật.\n\n"
                 "### 🌙 ĐÊM ĐẦU TIÊN\n"
-                "Chat đã **khóa**. Đêm kéo dài **2:00** → sau đó tự động chuyển sang **☀️ Ngày 5:00**.\n\n"
+                "Chat đã **khóa**. Đêm kéo dài **2:00** → sau đó tự động chuyển sang **☀️ Ngày 3:00**.\n\n"
                 "> 🔐 **Tuyệt đối không tiết lộ vai của mình.**"
             ),
             color=discord.Color.from_rgb(54, 35, 76)
@@ -2571,7 +2571,7 @@ class MasoiJoinView(discord.ui.View):
         )
         embed.add_field(
             name="⏱️ Thời gian",
-            value="Đêm: **2 phút** • Ngày: **5 phút** • Tự động chuyển",
+            value="Đêm: **2 phút** • Ngày: **3 phút** • Tự động chuyển",
             inline=False
         )
         if lock_err:
@@ -2604,7 +2604,7 @@ def masoi_lobby_embed(room):
             "<:member:1547566263381794846>Người chơi\n"
             f"{player_text}\n\n"
             "🌙 Khi bắt đầu\n"
-            "Đêm 2:00 → Ngày 5:00 → tự động lặp"
+            "Đêm 2:00 → Ngày 3:00 → tự động lặp"
         ),
         color=discord.Color.from_rgb(88, 61, 122)
     )
@@ -2765,13 +2765,13 @@ class MurderTargetSelect(discord.ui.Select):
         elif self.action == "investigate":
             # Thám tử nhận manh mối ngay trong DM, nhưng không công khai kết quả.
             is_murder = room["roles"].get(target) == "Murder"
-            clue = "⚠️ Có dấu hiệu cho thấy người này thuộc phe Murder." if is_murder else "🟢 Manh mối cho thấy người này không thuộc phe Murder."
+            clue = "<a:thongbao:1548169803540201582> Có dấu hiệu cho thấy người này thuộc phe Murder." if is_murder else "🟢 Manh mối cho thấy người này không thuộc phe Murder."
             room.setdefault("detective_clues", {})[self.actor_id] = clue
-            text = f"🔎 Đã điều tra {target_name}.\n{clue}"
+            text = f"<:__:1506650257272868865> Đã điều tra {target_name}.\n{clue}"
         elif self.action == "doctor":
-            text = f"💉 Đã chọn chữa trị {target_name}."
+            text = f"<:emoji_73:1547988300235800606> Đã chọn chữa trị {target_name}."
         else:
-            text = f"🛡️ Đã chọn bảo vệ {target_name}."
+            text = f"<:protect:1547583282034770000> Đã chọn bảo vệ {target_name}."
         await interaction.response.send_message(text, ephemeral=True)
 
 
@@ -2963,7 +2963,7 @@ def murder_phase_embed(room, title, extra=""):
         dead_lines.append(m.mention if m else f"<@{uid}>")
     desc = extra + "\n\n**🟢 Còn sống:** " + (", ".join(alive_lines) or "Không có")
     if dead_lines:
-        desc += "\n**💀 Đã chết:** " + ", ".join(dead_lines)
+        desc += "\n**<:dead:1547577908149747732> Đã chết:** " + ", ".join(dead_lines)
     return make_embed(title=title, description=desc, color=discord.Color.from_rgb(0, 0, 0))
 
 
@@ -2981,13 +2981,13 @@ async def murder_send_roles(room):
         try:
             await m.send(embed=embed)
             if role == "Murder":
-                await m.send("🔪 **ĐÊM:** Chọn 1 người để ám sát.", view=MurderActionView(room["room_id"], uid, "kill"))
+                await m.send("<:emoji_75:1547988327104254012> **ĐÊM:** Chọn 1 người để ám sát.", view=MurderActionView(room["room_id"], uid, "kill"))
             elif role == "Thám tử":
-                await m.send("🔎 **ĐÊM:** Chọn 1 người để điều tra. M sẽ nhận **1 manh mối**.", view=MurderActionView(room["room_id"], uid, "investigate"))
+                await m.send("<:emoji_71:1547988235127365772> **ĐÊM:** Chọn 1 người để điều tra. M sẽ nhận **1 manh mối**.", view=MurderActionView(room["room_id"], uid, "investigate"))
             elif role == "Bác sĩ":
-                await m.send("💉 **ĐÊM:** Chọn 1 người để chữa trị. Nếu đúng mục tiêu Murder chọn, người đó sống.", view=MurderActionView(room["room_id"], uid, "doctor"))
+                await m.send("<:emoji_73:1547988300235800606> **ĐÊM:** Chọn 1 người để chữa trị. Nếu đúng mục tiêu Murder chọn, người đó sống.", view=MurderActionView(room["room_id"], uid, "doctor"))
             elif role == "Bảo vệ":
-                await m.send("🛡️ **ĐÊM:** Chọn 1 người để bảo vệ. M có thể **tự bảo vệ chính mình**.", view=MurderActionView(room["room_id"], uid, "guard"))
+                await m.send("<:protect:1547583282034770000> **ĐÊM:** Chọn 1 người để bảo vệ. M có thể **tự bảo vệ chính mình**.", view=MurderActionView(room["room_id"], uid, "guard"))
             else:
                 await m.send("🌙 **Đêm nay:** M vô năng (thất nghiệp). Không có kỹ năng, hãy chờ sáng và tìm Murder.")
         except discord.Forbidden:
@@ -3060,10 +3060,10 @@ async def murder_send_detective_morning(room):
         return
     actor_name = actor.mention if actor else f"<@{actor_id}>"
     action_name = {
-        "kill": "🔪 ám sát",
-        "doctor": "💉 chữa trị",
-        "guard": "🛡️ bảo vệ",
-        "investigate": "🔎 điều tra",
+        "kill": "<:emoji_75:1547988327104254012> ám sát",
+        "doctor": "<:emoji_73:1547988300235800606> chữa trị",
+        "guard": "<:protect:1547583282034770000> bảo vệ",
+        "investigate": "<:__:1506650257272868865> điều tra",
     }.get(action, "hành động bí mật")
     try:
         await detective.send(f"☀️ **MANH MỐI BUỔI SÁNG:** Tối qua, {actor_name} đã thực hiện hành động **{action_name}**.")
@@ -3296,11 +3296,11 @@ async def murder_finish(room, winner, prefix=""):
         task.cancel()
     channel = bot.get_channel(room["channel_id"])
     if winner == "Dân":
-        result = "🎉 **PHE DÂN THẮNG!** Murder đã bị loại."
+        result = "<:villagers:1547581626379403355> **PHE DÂN THẮNG!** Murder đã bị loại."
     elif winner == "Murder":
-        result = "🔪 **MURDER THẮNG!** Sát nhân đã sống sót đến thế cân bằng."
+        result = "<:emoji_75:1547988327104254012> **MURDER THẮNG!** Sát nhân đã sống sót đến thế cân bằng."
     else:
-        result = "💀 **KHÔNG AI THẮNG.**"
+        result = "<:dead:1547577908149747732> **KHÔNG AI THẮNG.**"
     role_lines = []
     for uid in room["players"]:
         m = murder_member(room, uid)
@@ -3432,6 +3432,111 @@ async def help_command(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
+
+
+# ==================== TEST GAME: NGƯỜI CHƠI GIẢ ====================
+TEST_GAME_TASKS = {}
+
+@bot.command(name="test")
+@commands.cooldown(1, 10, commands.BucketType.user)
+async def test_game(ctx, game: str = "masoi", so_luong: int = 8):
+    """Tạo ván test tự động với người chơi giả.
+
+    Dùng:
+      !test masoi 8
+      !test murder 8
+    Người chơi giả tự động tham gia, hành động, bỏ phiếu và kết thúc ván.
+    """
+    game = game.lower().strip()
+    if game not in {"masoi", "murder"}:
+        return await ctx.send("❌ Chọn game `masoi` hoặc `murder`. Ví dụ: `!test masoi 8`")
+    so_luong = max(5, min(int(so_luong), 15))
+    old = TEST_GAME_TASKS.get(ctx.channel.id)
+    if old and not old.done():
+        return await ctx.send("⚠️ Kênh này đang có một ván test chạy.")
+
+    async def run_test():
+        rng = random.Random()
+        names = [f"Bot giả {i:02d}" for i in range(1, so_luong + 1)]
+        alive = names[:]
+        if game == "masoi":
+            wolf_count = 2 if so_luong <= 8 else 3
+            wolves = set(rng.sample(alive, wolf_count))
+            roles = {n: ("Sói" if n in wolves else "Dân làng") for n in alive}
+            await ctx.send(embed=make_embed(
+                title="🧪 TEST MA SÓI • VÁN GIẢ LẬP",
+                description=(f"Đã tạo **{so_luong} người chơi giả**.\n"
+                             "Các bot giả sẽ tự động hành động như người chơi thật.")
+            ))
+            round_no = 1
+            while len(alive) > 2 and round_no <= 12:
+                await asyncio.sleep(2)
+                victim = rng.choice([n for n in alive if n not in wolves] or alive)
+                alive.remove(victim)
+                await ctx.send(f"🌙 Đêm {round_no}: Sói giả đã chọn **{victim}**. Còn **{len(alive)}** người.")
+                if not (wolves & set(alive)):
+                    break
+                await asyncio.sleep(2)
+                vote_target = rng.choice(alive)
+                alive.remove(vote_target)
+                await ctx.send(f"☀️ Ngày {round_no}: Người chơi giả bỏ phiếu loại **{vote_target}**. Còn **{len(alive)}** người.")
+                if not (wolves & set(alive)):
+                    break
+                if len(wolves & set(alive)) >= len(set(alive) - wolves):
+                    break
+                round_no += 1
+            remaining_wolves = wolves & set(alive)
+            winner = "Ma Sói" if remaining_wolves and len(remaining_wolves) >= len(set(alive) - wolves) else "Dân làng"
+            lines = [f"**{n}** — {roles[n]}" for n in names]
+        else:
+            murder = rng.choice(alive)
+            detective = rng.choice([n for n in alive if n != murder])
+            roles = {n: ("Murder" if n == murder else "Thám tử" if n == detective else "Người chơi") for n in alive}
+            await ctx.send(embed=make_embed(
+                title="🧪 TEST MURDER • VÁN GIẢ LẬP",
+                description=(f"Đã tạo **{so_luong} người chơi giả**.\n"
+                             "Murder, Thám tử và người chơi sẽ tự động hành động.")
+            ))
+            for turn in range(1, min(8, so_luong + 2)):
+                await asyncio.sleep(2)
+                targets = [n for n in alive if n != murder]
+                if not targets:
+                    break
+                target = rng.choice(targets)
+                alive.remove(target)
+                await ctx.send(f"🔪 Lượt {turn}: Murder giả đã hạ **{target}**. Còn **{len(alive)}** người.")
+                if murder not in alive:
+                    break
+                await asyncio.sleep(2)
+                vote = rng.choice(alive)
+                alive.remove(vote)
+                await ctx.send(f"🗳️ Lượt {turn}: Người chơi giả bỏ phiếu loại **{vote}**.")
+                if vote == murder:
+                    break
+            winner = "Dân làng" if murder not in alive else "Murder"
+            lines = [f"**{n}** — {roles[n]}" for n in names]
+        await ctx.send(embed=make_embed(
+            title=f"🏁 TEST {game.upper()} • KẾT THÚC",
+            description=f"🏆 Phe thắng: **{winner}**\n\n🎭 **Vai của người chơi giả**\n" + "\n".join(lines),
+            color=discord.Color.dark_grey()
+        ))
+
+    task = asyncio.create_task(run_test())
+    TEST_GAME_TASKS[ctx.channel.id] = task
+    try:
+        await task
+    finally:
+        if TEST_GAME_TASKS.get(ctx.channel.id) is task:
+            TEST_GAME_TASKS.pop(ctx.channel.id, None)
+
+@test_game.error
+async def test_game_error(ctx, error):
+    if isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"⏳ Chờ {error.retry_after:.1f} giây rồi thử lại.")
+    elif isinstance(error, commands.BadArgument):
+        await ctx.send("❌ Số người chơi phải là số. Ví dụ: `!test masoi 8`")
+    else:
+        await ctx.send(f"❌ Lỗi test game: `{type(error).__name__}: {error}`")
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 if __name__ == "__main__":
