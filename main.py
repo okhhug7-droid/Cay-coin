@@ -227,6 +227,8 @@ LEVELUP_CONFIG = {
 }
 
 SPECIAL_ADMIN_ID = 1180179460339810314
+TEST_FAKE_ID_BASE = 900000000000000000
+TEST_FAKE_COUNTER = 0
 
 # ============================================================
 # GIỚI HẠN BOT CHỈ HOẠT ĐỘNG TRONG 1 SERVER (GUILD)
@@ -753,7 +755,7 @@ async def masoi_resolve_night(room):
     try:
         victim_member = guild.get_member(victim_id) if guild else None
         if victim_member:
-            await victim_member.send("<:dead:1547577908149747732> Bạn đã bị giết trong ván Ma Sói. Bạn không thể nhìn thấy tên Murder và Ma Sói.")
+            await victim_member.send("💀 Bạn đã bị giết trong ván Ma Sói. Bạn không thể nhìn thấy tên Murder và Ma Sói.")
     except discord.Forbidden:
         pass
     member = guild.get_member(victim_id) if guild else None
@@ -1168,7 +1170,7 @@ def masoi_lobby_embed(room):
     if guild:
         for uid in players:
             member = guild.get_member(uid)
-            name = member.mention if member else f"<@{uid}>"
+            name = member.mention if member else (f"**Bot Test {uid - TEST_FAKE_ID_BASE}**" if uid >= TEST_FAKE_ID_BASE else f"<@{uid}>")
             player_lines.append(name + ("  <a:699660goldcrown:1547563982393450556>" if uid == host_id else ""))
 
     player_text = "\n".join(player_lines) if player_lines else "Chưa có người chơi"
@@ -1925,6 +1927,43 @@ async def murder_command(interaction: discord.Interaction):
     }
     room = MURDER_ROOMS[room_id]
     await interaction.response.send_message(embed=murder_lobby_embed(room), view=MurderLobbyView(room_id))
+
+
+@bot.command(name="test")
+async def test_game(ctx, *args):
+    """Chỉ admin test: thêm người chơi giả vào phòng Ma Sói hoặc Murder."""
+    global TEST_FAKE_COUNTER
+    if ctx.author.id != SPECIAL_ADMIN_ID:
+        return
+    if not args:
+        return await ctx.send("Dùng: `!test masoi 10` hoặc `!test murder 10`")
+    game = args[0].lower()
+    if game.isdigit():
+        amount, game = int(game), "auto"
+    else:
+        amount = int(args[1]) if len(args) > 1 and args[1].isdigit() else 5
+    if amount < 1 or amount > 25:
+        return await ctx.send("Số lượng phải từ 1 đến 25.")
+    rooms = MASOI_ROOMS if game in ("masoi", "sói", "wolf") else MURDER_ROOMS if game == "murder" else None
+    if rooms is None:
+        rooms = {**MASOI_ROOMS, **MURDER_ROOMS}
+    room = next((r for r in rooms.values() if r.get("guild_id") == ctx.guild.id and r.get("channel_id") == ctx.channel.id and not r.get("started") and not r.get("game_finished")), None)
+    if not room:
+        return await ctx.send("❌ Không tìm thấy phòng lobby trong kênh này.")
+    if game == "auto":
+        game = "murder" if room.get("room_id", "").startswith("murder_") else "masoi"
+    limit = room.get("max_players", 25)
+    added = 0
+    for _ in range(min(amount, max(0, limit - len(room["players"])) )):
+        TEST_FAKE_COUNTER += 1
+        fake_id = TEST_FAKE_ID_BASE + TEST_FAKE_COUNTER
+        room["players"].append(fake_id)
+        room.setdefault("test_players", []).append(fake_id)
+        added += 1
+    if added == 0:
+        return await ctx.send("❌ Phòng đã đủ người.")
+    embed = masoi_lobby_embed(room) if game == "masoi" else murder_lobby_embed(room)
+    await ctx.send(f"✅ Đã thêm **{added}** người chơi giả vào phòng {game.upper()}.", embed=embed)
 
 
 @bot.tree.command(name="help", description="Xem danh sách lệnh của bot")
