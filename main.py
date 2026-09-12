@@ -1719,7 +1719,7 @@ async def murder_continue_after_bomb(room):
         await channel.send(embed=murder_phase_embed(
             room,
             "☀️ NGÀY — THẢO LUẬN & BỎ PHIẾU",
-            "🗳️ Dùng `/murdervote` để bỏ phiếu người mà  nghi là Murder. Thời gian: **3 phút**."
+            "🗳️ Thời gian thảo luận đã kết thúc. Hệ thống tự động mở bỏ phiếu Murder trong **30 giây**."
         ))
     room["phase_task"] = asyncio.create_task(murder_day_timer(room["room_id"]))
 
@@ -1972,15 +1972,15 @@ async def help_command(interaction: discord.Interaction):
         color=discord.Color.from_rgb(0, 0, 0)
     )
 
-embed.add_field(
-    name="🔪 MURDER",
-    value=(
-        "`/murder` — Tạo phòng Murder (5–15 người)\n"
-        "🗳️ Hệ thống tự động mở bỏ phiếu sau khi hết thời gian thảo luận\n"
-        "Vai: Murder • Thám tử • Bác sĩ • Bảo vệ • Người thường (thất nghiệp)"
-    ),
-    inline=False
-)
+    embed.add_field(
+        name="🔪 MURDER",
+        value=(
+            "`/murder` — Tạo phòng Murder (5–15 người)\n"
+            "🗳️ Hệ thống tự động mở bỏ phiếu sau khi hết thời gian thảo luận\n"
+            "Vai: Murder • Thám tử • Bác sĩ • Bảo vệ • Người thường (thất nghiệp)"
+        ),
+        inline=False
+    )
 
     embed.add_field(
         name="🐺 MA SÓI",
