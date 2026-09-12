@@ -516,7 +516,7 @@ class LevelManagementDashboard(discord.ui.View):
                 "Chỉ có thể cấu hình role tại các mốc: "
                 "**Level 1 • 25 • 50 • 100 • 200**"
             ),
-            color=discord.Color.blurple()
+            color=discord.Color.from_rgb(0, 0, 0)
         )
 
         lines = []
@@ -932,7 +932,7 @@ async def setboostrole(interaction: discord.Interaction, role: discord.Role):
         ON CONFLICT(guild_id) DO UPDATE SET role_id = ?
     """, (interaction.guild.id, role.id, role.id))
     db_conn.commit()
-    await interaction.response.send_message(f"✅ Đã thiết lập Role Boost: {role.mention}", ephemeral=True)
+    await interaction.response.send_message(f"<a:verify:1548178353859596320> Đã thiết lập Role Boost: {role.mention}", ephemeral=True)
 
 
 class BirthdayModal(discord.ui.Modal, title="🎂 Đăng ký Ngày Sinh Nhật"):
@@ -940,7 +940,7 @@ class BirthdayModal(discord.ui.Modal, title="🎂 Đăng ký Ngày Sinh Nhật")
 
     async def on_submit(self, interaction: discord.Interaction):
         user_birthdays[interaction.user.id] = self.dob_input.value.strip()
-        await interaction.response.send_message("✅ Đã lưu ngày sinh thành công!", ephemeral=True)
+        await interaction.response.send_message("<a:verify:1548178353859596320> Đã lưu ngày sinh thành công!", ephemeral=True)
 
 class BirthdayView(discord.ui.View):
     def __init__(self):
@@ -965,7 +965,7 @@ async def setannouncement(interaction: discord.Interaction, channel: discord.Tex
     )
 
 
-class AnnouncementModal(discord.ui.Modal, title="📢 TẠO THÔNG BÁO PRO"):
+class AnnouncementModal(discord.ui.Modal, title="<a:thongbao:1548169803540201582> TẠO THÔNG BÁO PRO"):
     title_input = discord.ui.TextInput(
         label="Tiêu đề thông báo",
         placeholder="Ví dụ: 📢 Thông báo sự kiện mới",
@@ -1048,7 +1048,7 @@ class AnnouncementModal(discord.ui.Modal, title="📢 TẠO THÔNG BÁO PRO"):
         embed = make_embed(
             title=title,
             description=content,
-            color=discord.Color.blurple(),
+            color=discord.Color.from_rgb(0, 0, 0),
         )
         embed.set_footer(text=f"Đăng bởi {interaction.user.display_name}")
 
@@ -1114,7 +1114,7 @@ async def setbirthday(interaction: discord.Interaction, channel: discord.TextCha
     server_congrats_channels[interaction.guild.id] = congrats_channel.id
     embed = make_embed(title="🎈 ĐĂNG KÝ SINH NHẬT", description="Nhấn nút bên dưới để khai báo ngày sinh.", color=discord.Color.pink())
     await channel.send(embed=embed, view=BirthdayView())
-    await interaction.response.send_message("✅ Đã tạo bảng đăng ký sinh nhật!", ephemeral=True)
+    await interaction.response.send_message("<a:verify:1548178353859596320> Đã tạo bảng đăng ký sinh nhật!", ephemeral=True)
 
 
 @tasks.loop(hours=24)
@@ -1207,7 +1207,7 @@ async def unban(ctx, user_id: int, *, reason="Không có lý do"):
 @commands.has_permissions(moderate_members=True)
 async def mute(ctx, member: discord.Member, minutes: int, *, reason="Không có lý do"):
     await member.timeout(discord.utils.utcnow() + datetime.timedelta(minutes=minutes), reason=reason)
-    await ctx.send(f"<:immom:1506650421677260901> Dã khóa mõm **{member}** trong {minutes} phút.")
+    await ctx.send(f"<:immom:1506650421677260901> Đã khóa mõm **{member}** trong {minutes} phút.")
 
 @bot.command(name="unmute")
 @commands.has_permissions(moderate_members=True)
@@ -1298,7 +1298,7 @@ class NhanRoleModal(discord.ui.Modal, title="🎭 NHẬN ROLE"):
             return
 
         await interaction.response.send_message(
-            f"✅ Bạn đã nhận {role.mention} thành công!",
+            f"<a:verify:1548178353859596320> Bạn đã nhận {role.mention} thành công!",
             ephemeral=True
         )
 
@@ -1453,7 +1453,7 @@ async def setupstats(interaction: discord.Interaction):
         ))
 
         await interaction.followup.send(
-            "✅ Đã thiết lập thống kê đầy đủ: Member / Bot / Tổng / Online / Boost.",
+            "<a:verify:1548178353859596320> Đã thiết lập thống kê đầy đủ: Member / Bot / Tổng / Online / Boost.",
             ephemeral=True
         )
 
@@ -1526,7 +1526,7 @@ async def on_member_join(member: discord.Member):
     embed = make_embed(
         title="<a:chcmng:1547243888639615097> CHÀO MỪNG THÀNH VIÊN MỚI",
         description=msg,
-        color=discord.Color.blurple()
+        color=discord.Color.from_rgb(0, 0, 0)
     )
     embed.set_thumbnail(url=member.display_avatar.url)
 
