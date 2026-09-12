@@ -755,7 +755,7 @@ async def masoi_resolve_night(room):
     try:
         victim_member = guild.get_member(victim_id) if guild else None
         if victim_member:
-            await victim_member.send("💀 Bạn đã bị giết trong ván Ma Sói. Bạn không thể nhìn thấy tên Murder và Ma Sói.")
+            await victim_member.send("💀 Bạn đã bị giết trong ván Ma Sói. Bạn không thể nhìn thấy tên của Ma Sói.")
     except discord.Forbidden:
         pass
     member = guild.get_member(victim_id) if guild else None
@@ -802,7 +802,7 @@ def masoi_status_embed(room):
 
 
 async def masoi_phase_timer(room_id, phase, seconds):
-    """Tự động chuyển Ngày/Đêm: đêm 2 phút, ngày 5 phút."""
+    """Tự động chuyển Ngày/Đêm: đêm 2 phút, ngày 3 phút."""
     try:
         await asyncio.sleep(seconds)
         room = MASOI_ROOMS.get(room_id)
@@ -891,7 +891,7 @@ class MasoiRoleView(discord.ui.View):
 
 class MasoiDayButton(discord.ui.Button):
     def __init__(self, room_id):
-        super().__init__(label="☀️ NGÀY • 5 PHÚT", style=discord.ButtonStyle.success, custom_id=f"masoi_day_{room_id}")
+        super().__init__(label="☀️ NGÀY • 3 PHÚT", style=discord.ButtonStyle.success, custom_id=f"masoi_day_{room_id}")
         self.room_id = room_id
 
     async def callback(self, interaction: discord.Interaction):
@@ -1065,7 +1065,7 @@ class MasoiJoinView(discord.ui.View):
 
         if interaction.user.id in room["players"]:
             return await interaction.response.send_message(
-                "✅ Bạn đã tham gia rồi!",
+                "<a:verify:1548178353859596320> Bạn đã tham gia rồi!",
                 ephemeral=True
             )
 
@@ -1124,7 +1124,7 @@ class MasoiJoinView(discord.ui.View):
                 "### 🎭 BÀI ĐÃ ĐƯỢC CHIA\n"
                 "Mỗi người hãy bấm **<a:werewolf562516:1547493117786329098> Xem vai của tôi** để xem vai bí mật.\n\n"
                 "### 🌙 ĐÊM ĐẦU TIÊN\n"
-                "Chat đã **khóa**. Đêm kéo dài **2:00** → sau đó tự động chuyển sang **☀️ Ngày 5:00**.\n\n"
+                "Chat đã **khóa**. Đêm kéo dài **2:00** → sau đó tự động chuyển sang **☀️ Ngày 3:00**.\n\n"
                 "> 🔐 **Tuyệt đối không tiết lộ vai của mình.**"
             ),
             color=discord.Color.from_rgb(54, 35, 76)
@@ -1147,7 +1147,7 @@ class MasoiJoinView(discord.ui.View):
         )
         embed.add_field(
             name="⏱️ Thời gian",
-            value="Đêm: **2 phút** • Ngày: **5 phút** • Tự động chuyển",
+            value="Đêm: **2 phút** • Ngày: **3 phút** • Tự động chuyển",
             inline=False
         )
         if lock_err:
@@ -1180,7 +1180,7 @@ def masoi_lobby_embed(room):
             "<:member:1547566263381794846>Người chơi\n"
             f"{player_text}\n\n"
             "🌙 Khi bắt đầu\n"
-            "Đêm 2:00 → Ngày 5:00 → tự động lặp"
+            "Đêm 2:00 → Ngày :00 → tự động lặp"
         ),
         color=discord.Color.from_rgb(88, 61, 122)
     )
@@ -1719,7 +1719,7 @@ async def murder_continue_after_bomb(room):
         await channel.send(embed=murder_phase_embed(
             room,
             "☀️ NGÀY — THẢO LUẬN & BỎ PHIẾU",
-            "🗳️ Dùng `/murdervote` để bỏ phiếu người mà  nghi là Murder. Thời gian: **3 phút**."
+            "🗳️ Thời gian thảo luận đã kết thúc. Hệ thống tự động mở bỏ phiếu Murder trong **30 giây**."
         ))
     room["phase_task"] = asyncio.create_task(murder_day_timer(room["room_id"]))
 
@@ -1808,7 +1808,7 @@ class MurderVoteView(discord.ui.View):
 async def murder_day_timer(room_id):
     """3 phút thảo luận, 30 giây cuối là thời gian bỏ phiếu."""
     try:
-        await asyncio.sleep(max(0, DISCUSSION_SECONDS - VOTE_SECONDS))
+        await asyncio.sleep(DISCUSSION_SECONDS)
         room = MURDER_ROOMS.get(room_id)
         if not room or room.get("phase") != "day" or room.get("game_finished"):
             return
@@ -1961,7 +1961,7 @@ async def test_game(ctx, *args):
     if added == 0:
         return await ctx.send("❌ Phòng đã đủ người.")
     embed = masoi_lobby_embed(room) if game == "masoi" else murder_lobby_embed(room)
-    await ctx.send(f"✅ Đã thêm **{added}** người chơi giả vào phòng {game.upper()}.", embed=embed)
+    await ctx.send(f"<a:verify:1548178353859596320> Đã thêm **{added}** người chơi giả vào phòng {game.upper()}.", embed=embed)
 
 
 @bot.tree.command(name="help", description="Xem danh sách lệnh của bot")
