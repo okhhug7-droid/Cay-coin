@@ -37,7 +37,8 @@ Phong cách:
 """
 
 # --- CẤU HÌNH GEMINI AI ---
-ai_client = genai.Client()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -2044,6 +2045,61 @@ async def help_command(interaction: discord.Interaction):
     )
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+
+# ============================================================
+# KHỞI ĐỘNG, ĐỒNG BỘ SLASH COMMAND VÀ AI GEMINI
+# ============================================================
+@bot.event
+async def on_ready():
+    try:
+        synced = await bot.tree.sync()
+        print(f"[OK] Đã đồng bộ {len(synced)} slash commands")
+    except Exception as e:
+        print(f"[ERROR] Không thể đồng bộ slash commands: {type(e).__name__}: {e}")
+    print(f"[OK] Bot online: {bot.user} ({bot.user.id})")
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+
+    # Luôn xử lý các lệnh prefix như !help, !test, !play...
+    await bot.process_commands(message)
+
+    # AI chỉ phản hồi khi được mention hoặc nhắn riêng cho bot.
+    is_dm = message.guild is None
+    is_mentioned = bot.user is not None and bot.user in message.mentions
+    if not (is_dm or is_mentioned):
+        return
+
+    if ai_client is None:
+        await message.reply("⚠️ Bot chưa được cấu hình GEMINI_API_KEY trên Railway.", mention_author=False)
+        return
+
+    prompt = message.content
+    if bot.user:
+        prompt = prompt.replace(f"<@{bot.user.id}>", "").replace(f"<@!{bot.user.id}>", "").strip()
+    if not prompt:
+        prompt = "Nói chuyện với tôi tự nhiên bằng tiếng Việt."
+
+    try:
+        async with message.channel.typing():
+            response = await asyncio.to_thread(
+                ai_client.models.generate_content,
+                model="gemini-2.5-flash",
+                contents=f"{GEMINI_SYSTEM_PROMPT}\n\nNgười dùng: {prompt}"
+            )
+        answer = getattr(response, "text", None)
+        if not answer:
+            answer = "⚠️ Gemini không trả về nội dung."
+        for start in range(0, len(answer), 1900):
+            await message.reply(answer[start:start + 1900], mention_author=False)
+    except Exception as e:
+        print(f"[ERROR] Gemini: {type(e).__name__}: {e}")
+        await message.reply("⚠️ AI đang lỗi hoặc hết hạn mức API. Kiểm tra GEMINI_API_KEY và log Railway.", mention_author=False)
 
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
