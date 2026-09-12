@@ -887,8 +887,6 @@ class MasoiRoleView(discord.ui.View):
         super().__init__(timeout=None)
         self.room_id = room_id
         self.add_item(MasoiRevealRoleButton(room_id))
-        self.add_item(MasoiDayButton(room_id))
-        self.add_item(MasoiNightButton(room_id))
 
 
 class MasoiDayButton(discord.ui.Button):
