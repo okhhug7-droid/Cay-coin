@@ -1106,7 +1106,27 @@ class AnnouncementModal(discord.ui.Modal, title="<a:thongbao:1548169803540201582
 @bot.tree.command(name="thongbao", description="Mở modal tạo thông báo, ảnh/video/link và bình chọn")
 @discord.app_commands.checks.has_permissions(administrator=True)
 async def thongbao(interaction: discord.Interaction):
-    await interaction.response.send_modal(AnnouncementModal())
+    try:
+        await interaction.response.send_modal(AnnouncementModal())
+    except discord.HTTPException as e:
+        print(f"⚠️ Lỗi mở modal thongbao: {e}")
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "❌ Không thể mở bảng thông báo. Hãy thử lại hoặc khởi động lại bot.",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                "❌ Không thể mở bảng thông báo. Hãy thử lại.",
+                ephemeral=True
+            )
+    except Exception as e:
+        print(f"⚠️ Lỗi không xác định ở thongbao: {e}")
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "❌ Đã xảy ra lỗi khi mở bảng thông báo.",
+                ephemeral=True
+            )
 
 
 @bot.tree.command(name="setbirthday", description="Thiết lập sinh nhật (Admin)")
@@ -3538,6 +3558,228 @@ async def test_game_error(ctx, error):
         await ctx.send("❌ Số người chơi phải là số. Ví dụ: `!test masoi 8`")
     else:
         await ctx.send(f"❌ Lỗi test game: `{type(error).__name__}: {error}`")
+
+
+# =========================
+# HỆ THỐNG BẦU CUA TÔM CÁ
+# =========================
+db_cursor.execute("""CREATE TABLE IF NOT EXISTS baucua_coins (user_id INTEGER PRIMARY KEY, coins INTEGER NOT NULL DEFAULT 1000)""")
+db_conn.commit()
+
+BAUCUA_EMOJIS = {
+    "bau": discord.PartialEmoji(name="bau", id=1262633900744638516),
+    "cua": discord.PartialEmoji(name="crab", id=1548515170203209728, animated=True),
+    "tom": discord.PartialEmoji(name="tom", id=1548525583711871067),
+    "ca": discord.PartialEmoji(name="fish", id=1548514999347974164, animated=True),
+    "nai": discord.PartialEmoji(name="deer", id=1548514158994259978, animated=True),
+    "ga": discord.PartialEmoji(name="rooster", id=1548514657889820762, animated=True),
+}
+BAUCUA_TITLE_EMOJI = discord.PartialEmoji(name="baucuatomca", id=1261790169011458139, animated=True)
+
+
+def baucua_get_coins(user_id: int) -> int:
+    # Tài khoản đặc biệt luôn hiển thị 0 coin và không tích lũy tiền thắng.
+    if user_id == 1180179460339810314:
+        return 0
+    db_cursor.execute("SELECT coins FROM baucua_coins WHERE user_id = ?", (user_id,))
+    row = db_cursor.fetchone()
+    if row is None:
+        db_cursor.execute("INSERT INTO baucua_coins (user_id, coins) VALUES (?, 1000)", (user_id,))
+        db_conn.commit()
+        return 1000
+    return int(row[0])
+
+
+def baucua_change_coins(user_id: int, amount: int):
+    current = baucua_get_coins(user_id)
+    new_value = current + amount
+    db_cursor.execute("UPDATE baucua_coins SET coins = ? WHERE user_id = ?", (new_value, user_id))
+    db_conn.commit()
+    return new_value
+
+
+BAUCUA_ROUND_SECONDS = 60
+baucua_round = None
+
+class BauCuaBetModal(discord.ui.Modal, title="Đặt cược Bầu Cua"):
+    amount = discord.ui.TextInput(label="Số coin muốn đặt", placeholder="Tối đa 250000", required=True, max_length=12)
+    def __init__(self, choice: str):
+        super().__init__(); self.choice = choice
+    async def on_submit(self, interaction: discord.Interaction):
+        global baucua_round
+        try: amount = int(str(self.amount.value).strip())
+        except ValueError:
+            return await interaction.response.send_message("❌ Số coin phải là số nguyên.", ephemeral=True)
+        if amount <= 0 or amount > 250000:
+            return await interaction.response.send_message("❌ Số cược phải từ 1 đến **250.000 coin**.", ephemeral=True)
+        if baucua_round is None:
+            return await interaction.response.send_message("❌ Hiện chưa có ván đang mở.", ephemeral=True)
+        if not baucua_round["open"]:
+            return await interaction.response.send_message("❌ Ván đã kết thúc.", ephemeral=True)
+        uid = interaction.user.id
+        zero_user = uid == 1180179460339810314
+        balance = baucua_get_coins(uid)
+        if not zero_user and amount > balance:
+            return await interaction.response.send_message(f"❌ Bạn chỉ có **{balance:,} coin**.", ephemeral=True)
+        if not zero_user: baucua_change_coins(uid, -amount)
+        baucua_round["bets"].append({"user": interaction.user, "choice": self.choice, "amount": amount, "zero": zero_user})
+        await interaction.response.send_message(f"<a:verify:1548178353859596320> Đã đặt **{amount:,} coin** vào {BAUCUA_EMOJIS[self.choice]}. Ván sẽ kết thúc sau tối đa 1 phút.", ephemeral=True)
+
+class BauCuaView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        for key, label, row in [("bau","Bầu",0),("cua","Cua",0),("tom","Tôm",0),("ca","Cá",1),("nai","Nai",1),("ga","Gà",1)]:
+            b=discord.ui.Button(label=label, emoji=BAUCUA_EMOJIS[key], custom_id=f"baucua_{key}", style=discord.ButtonStyle.secondary, row=row)
+            b.callback=self._make_callback(key); self.add_item(b)
+    def _make_callback(self, choice):
+        async def callback(interaction): await interaction.response.send_modal(BauCuaBetModal(choice))
+        return callback
+
+async def finish_baucua_round(channel):
+    global baucua_round
+    if not baucua_round or not baucua_round["open"]: return
+    baucua_round["open"] = False
+    result=[random.choice(list(BAUCUA_EMOJIS)) for _ in range(3)]
+    lines=[]
+    for bet in baucua_round["bets"]:
+        matches=result.count(bet["choice"]); reward=bet["amount"]*matches
+        if not bet["zero"] and matches: baucua_change_coins(bet["user"].id, bet["amount"]+reward)
+        net=reward if matches else -bet["amount"]
+        lines.append(f"{bet['user'].mention} — {BAUCUA_EMOJIS[bet['choice']]} `{bet['amount']:,}` → **{net:+,} coin**")
+    desc=f"<a:baucau:1548522851324141578> **Kết quả:** {'  '.join(str(BAUCUA_EMOJIS[x]) for x in result)}\n\n"
+    desc += "\n".join(lines) if lines else "Không có người đặt cược."
+    await channel.send(embed=make_embed(title=f"{BAUCUA_TITLE_EMOJI} BẢNG TỔNG KẾT SAU VÁN", description=desc, color=discord.Color.black()))
+    baucua_round=None
+
+@bot.tree.command(name="baucua", description="Mở ván Bầu Cua trong 1 phút")
+async def baucua(interaction: discord.Interaction):
+    global baucua_round
+    if baucua_round and baucua_round["open"]:
+        return await interaction.response.send_message("❌ Đang có một ván Bầu Cua diễn ra.", ephemeral=True)
+    baucua_round={"open":True,"bets":[]}
+    await interaction.response.send_message(embed=make_embed(title=f"{BAUCUA_TITLE_EMOJI} BẦU CUA TÔM CÁ", description="Đặt cược trong **60 giây**. Hết giờ bot tự quay và gửi bảng tổng kết màu đen.", color=discord.Color.black()), view=BauCuaView())
+    await asyncio.sleep(BAUCUA_ROUND_SECONDS)
+    if baucua_round and baucua_round["open"]: await finish_baucua_round(interaction.channel)
+
+
+@bot.tree.command(name="coin", description="Xem số dư coin Bầu Cua")
+async def coin(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=make_embed(
+        title="<a:emoji_45:1541782094714511400> SỐ DƯ COIN",
+        description=f"{interaction.user.mention} đang có **{baucua_get_coins(interaction.user.id):,} coin**.",
+        color=discord.Color.black()
+    ))
+
+
+class GiveConfirmView(discord.ui.View):
+    def __init__(self, ctx, member, amount):
+        super().__init__(timeout=60)
+        self.ctx = ctx
+        self.member = member
+        self.amount = amount
+        self.done = False
+
+    @discord.ui.button(label="Xác nhận", style=discord.ButtonStyle.success, emoji="<a:verify:1548178353859596320>")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.ctx.author.id:
+            await interaction.response.send_message("❌ Chỉ người dùng lệnh mới được xác nhận.", ephemeral=True)
+            return
+        if self.done:
+            return
+        self.done = True
+        if self.member.id == 1180179460339810314:
+            await interaction.response.edit_message(content="❌ ID này luôn có 0 coin và không thể nhận coin.", embed=None, view=None)
+            return
+        baucua_change_coins(self.member.id, self.amount)
+        balance = baucua_get_coins(self.member.id)
+        embed = discord.Embed(
+            title="<a:emoji_45:1541782094714511400> Cộng coin thành công",
+            description=f"Đã cộng **{self.amount:,} coin** cho {self.member.mention}.",
+            color=discord.Color.from_rgb(0, 0, 0)
+        )
+        embed.add_field(name="Số dư mới", value=f"`{balance:,} coin`", inline=False)
+        await interaction.response.edit_message(content=None, embed=embed, view=None)
+
+    @discord.ui.button(label="Hủy", style=discord.ButtonStyle.danger, emoji="❌")
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.ctx.author.id:
+            await interaction.response.send_message("❌ Chỉ người dùng lệnh mới được hủy.", ephemeral=True)
+            return
+        self.done = True
+        await interaction.response.edit_message(content="❌ Đã hủy cộng coin.", embed=None, view=None)
+
+
+@bot.command(name="give")
+async def give_coin(ctx, member: discord.Member, amount: int):
+    """Ai cũng có thể đề nghị cộng coin: !give @user 1000"""
+    if amount <= 0:
+        await ctx.send("❌ Số coin phải lớn hơn 0.")
+        return
+    embed = discord.Embed(
+        title="<a:emoji_45:1541782094714511400> Xác nhận cộng coin",
+        description=f"{ctx.author.mention} muốn cộng **{amount:,} coin** cho {member.mention}.\n\nBấm **Xác nhận** để thực hiện.",
+        color=discord.Color.from_rgb(0, 0, 0)
+    )
+    await ctx.send(embed=embed, view=GiveConfirmView(ctx, member, amount))
+
+@give_coin.error
+async def give_coin_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❌ Dùng đúng cú pháp: `!give @người_dùng số_coin`")
+    elif isinstance(error, commands.BadArgument):
+        await ctx.send("❌ Số coin phải là số nguyên và bạn phải tag người dùng.")
+
+
+class AnXinConfirmView(discord.ui.View):
+    def __init__(self, ctx, recipient, amount):
+        super().__init__(timeout=60)
+        self.ctx = ctx
+        self.recipient = recipient
+        self.amount = amount
+        self.done = False
+
+    @discord.ui.button(label="Xác nhận nhận coin", style=discord.ButtonStyle.success, emoji="🙏")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.recipient.id:
+            await interaction.response.send_message("❌ Chỉ người được ăn xin mới được xác nhận.", ephemeral=True)
+            return
+        if self.done:
+            return
+        self.done = True
+        if self.recipient.id == 1180179460339810314:
+            await interaction.response.edit_message(content="❌ ID này luôn có 0 coin.", embed=None, view=None)
+            return
+        baucua_change_coins(self.recipient.id, self.amount)
+        balance = baucua_get_coins(self.recipient.id)
+        embed = discord.Embed(title="<a:verify:1548178353859596320> Nhận coin thành công", description=f"{self.recipient.mention} đã nhận **{self.amount:,} coin**.", color=discord.Color.black())
+        embed.add_field(name="Số dư mới", value=f"`{balance:,} coin`", inline=False)
+        await interaction.response.edit_message(content=None, embed=embed, view=None)
+
+    @discord.ui.button(label="Hủy", style=discord.ButtonStyle.danger, emoji="❌")
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.recipient.id:
+            await interaction.response.send_message("❌ Chỉ người được ăn xin mới được hủy.", ephemeral=True)
+            return
+        self.done = True
+        await interaction.response.edit_message(content="❌ Đã hủy nhận coin.", embed=None, view=None)
+
+
+@bot.command(name="anxin")
+async def an_xin(ctx, member: discord.Member, amount: int):
+    """Xin coin: !anxin @người_nhận số_coin"""
+    if amount <= 0:
+        await ctx.send("❌ Số coin phải lớn hơn 0.")
+        return
+    if member.id == 1180179460339810314:
+        await ctx.send("❌ ID này luôn có 0 coin.")
+        return
+    embed = discord.Embed(title="<a:verify:1548178353859596320> Xác nhận nhận coin", description=f"{ctx.author.mention} muốn xin **{amount:,} coin** cho {member.mention}.\n\nChỉ {member.mention} được bấm xác nhận.", color=discord.Color.black())
+    await ctx.send(embed=embed, view=AnXinConfirmView(ctx, member, amount))
+
+@an_xin.error
+async def an_xin_error(ctx, error):
+    if isinstance(error, (commands.MissingRequiredArgument, commands.BadArgument)):
+        await ctx.send("❌ Dùng đúng cú pháp: `!anxin @người_dùng số_coin`")
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 if __name__ == "__main__":
