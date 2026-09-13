@@ -3447,7 +3447,7 @@ db_cursor.execute("""CREATE TABLE IF NOT EXISTS baucua_coins (user_id INTEGER PR
 db_conn.commit()
 
 BAUCUA_EMOJIS = {
-    "bau": discord.PartialEmoji(name="bau", id=1262633900744638516),
+    "bau": discord.PartialEmoji(name="bau", id=1548524879748272250),
     "cua": discord.PartialEmoji(name="crab", id=1548515170203209728, animated=True),
     "tom": discord.PartialEmoji(name="tom", id=1548525583711871067),
     "ca": discord.PartialEmoji(name="fish", id=1548514999347974164, animated=True),
@@ -3482,7 +3482,7 @@ def baucua_change_coins(user_id: int, amount: int):
     return new_value
 
 
-BAUCUA_ROUND_SECONDS = 60
+BAUCUA_ROUND_SECONDS = 30
 baucua_round = None
 
 class BauCuaBetModal(discord.ui.Modal, title="Đặt cược Bầu Cua"):
@@ -3507,7 +3507,7 @@ class BauCuaBetModal(discord.ui.Modal, title="Đặt cược Bầu Cua"):
             return await interaction.response.send_message(f"❌ Bạn chỉ có **{balance:,} coin**.", ephemeral=True)
         if not zero_user: baucua_change_coins(uid, -amount)
         baucua_round["bets"].append({"user": interaction.user, "choice": self.choice, "amount": amount, "zero": zero_user})
-        await interaction.response.send_message(f"<a:verify:1548178353859596320> Đã đặt **{amount:,} coin** vào {BAUCUA_EMOJIS[self.choice]}. Ván sẽ kết thúc sau 1 phút.", ephemeral=True)
+        await interaction.response.send_message(f"<a:verify:1548178353859596320> Đã đặt **{amount:,} coin** vào {BAUCUA_EMOJIS[self.choice]}. Ván sẽ kết thúc sau 30 giây.", ephemeral=True)
 
 class BauCuaView(discord.ui.View):
     def __init__(self):
@@ -3516,7 +3516,11 @@ class BauCuaView(discord.ui.View):
             b=discord.ui.Button(label=label, emoji=BAUCUA_EMOJIS[key], custom_id=f"baucua_{key}", style=discord.ButtonStyle.secondary, row=row)
             b.callback=self._make_callback(key); self.add_item(b)
     def _make_callback(self, choice):
-        async def callback(interaction): await interaction.response.send_modal(BauCuaBetModal(choice))
+        async def callback(interaction):
+            global baucua_round
+            if not baucua_round or not baucua_round.get("open"):
+                return await interaction.response.send_message("❌ Ván đã kết thúc, không thể đặt cược nữa.", ephemeral=True)
+            await interaction.response.send_modal(BauCuaBetModal(choice))
         return callback
 
 async def finish_baucua_round(channel):
@@ -3530,9 +3534,25 @@ async def finish_baucua_round(channel):
         if not bet["zero"] and matches: baucua_change_coins(bet["user"].id, bet["amount"]+reward)
         net=reward if matches else -bet["amount"]
         lines.append(f"{bet['user'].mention} — {BAUCUA_EMOJIS[bet['choice']]} `{bet['amount']:,}` → **{net:+,} coin**")
-    desc=f"<a:baucau:1548522851324141578> **Kết quả:** {'  '.join(str(BAUCUA_EMOJIS[x]) for x in result)}\n\n"
+    title=f"{BAUCUA_TITLE_EMOJI} Bầu cua  • Birthdaytime"
+    # Hiện từng kết quả cách nhau 1 giây bằng cách chỉnh sửa cùng một Embed.
+    shown=[]
+    message=await channel.send(embed=make_embed(
+        title=title,
+        description="Kết quả:\n" + str(BAUCUA_TITLE_EMOJI),
+        color=discord.Color.dark_grey()
+    ))
+    for item in result:
+        await asyncio.sleep(1)
+        shown.append(str(BAUCUA_EMOJIS[item]))
+        await message.edit(embed=make_embed(
+            title=title,
+            description="Kết quả:\n" + "  ".join(shown),
+            color=discord.Color.dark_grey()
+        ))
+    desc="Kết quả:\n" + "  ".join(shown) + "\n\n"
     desc += "\n".join(lines) if lines else "Không có người đặt cược."
-    await channel.send(embed=make_embed(title=f"{BAUCUA_TITLE_EMOJI} Bầu cua  • Birthdaytime", description=desc, color=discord.Color.from_rgb(0, 0, 0)))
+    await message.edit(embed=make_embed(title=title, description=desc, color=discord.Color.dark_grey()))
     baucua_round=None
 
 @bot.tree.command(name="baucua", description="Mở ván Bầu Cua trong 1 phút")
