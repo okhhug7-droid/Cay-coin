@@ -232,7 +232,7 @@ SPECIAL_ADMIN_ID = 1548490039158251531
 # GIỚI HẠN BOT CHỈ HOẠT ĐỘNG TRONG 1 SERVER (GUILD)
 # ============================================================
 ALLOWED_GUILD_ID = 1503922700408586240
-UNAUTHORIZED_GUILD_MESSAGE = "<a:emoji_44:1541290870966325318> Đây là đâu, BirthdayTime mới là nhà của t"
+UNAUTHORIZED_GUILD_MESSAGE = "<a:emoji_44:1541290870966325318> Đây là đâu ?, BirthdayTime mới là nhà của t"
 
 async def leave_unauthorized_guild(guild: discord.Guild):
     """Báo trong server không được phép rồi tự rời server."""
@@ -516,7 +516,7 @@ class LevelManagementDashboard(discord.ui.View):
                 "Chỉ có thể cấu hình role tại các mốc: "
                 "**Level 1 • 25 • 50 • 100 • 200**"
             ),
-            color=discord.Color.from_rgb(0, 0, 0)
+            color=discord.Color.dark_gray()
         )
 
         lines = []
@@ -630,7 +630,7 @@ async def xembinhchon(interaction: discord.Interaction, message_id: str):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-class WelcomeConfigModal(discord.ui.Modal, title="👋 Cài đặt Welcome"):
+class WelcomeConfigModal(discord.ui.Modal, title="<a:1463wave:1548592549294383115> Cài đặt Welcome"):
     channel_id = discord.ui.TextInput(
         label="ID kênh Welcome",
         placeholder="Ví dụ: 123456789012345678",
@@ -808,7 +808,7 @@ async def setboostrole(interaction: discord.Interaction, role: discord.Role):
     await interaction.response.send_message(f"<a:verify:1548178353859596320> Đã thiết lập Role Boost: {role.mention}", ephemeral=True)
 
 
-class BirthdayModal(discord.ui.Modal, title="🎂 Đăng ký Ngày Sinh Nhật"):
+class BirthdayModal(discord.ui.Modal, title="<a:happybirthday:1548593066158465044> Đăng ký Ngày Sinh Nhật"):
     dob_input = discord.ui.TextInput(label="Ngày sinh (DD/MM/YYYY)", placeholder="25/12/2004", required=True, max_length=15)
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -922,9 +922,9 @@ class AnnouncementModal(discord.ui.Modal, title="TAO THONG BAO PRO"):
         embed = make_embed(
             title=title,
             description=content,
-            color=discord.Color.from_rgb(0, 0, 0),
+            color=discord.Color.dark_gray(),
         )
-        embed.set_footer(text=f"Đăng bởi {interaction.user.display_name}")
+        add_standard_footer(embed)
 
         send_content = f"<@&{role_id}>"
         if media_url:
@@ -1427,7 +1427,7 @@ async def on_member_join(member: discord.Member):
     embed = make_embed(
         title="<a:chcmng:1547243888639615097> CHÀO MỪNG THÀNH VIÊN MỚI",
         description=msg,
-        color=discord.Color.from_rgb(0, 0, 0)
+        color=discord.Color.dark_gray()
     )
     embed.set_thumbnail(url=member.display_avatar.url)
 
@@ -2162,7 +2162,7 @@ async def masoi_phase_timer(room_id, phase, seconds):
                         "<a:chcmng:1547243888639615097> chúc mừng các member chiến thắng<a:699660goldcrown:1547563982393450556>\n"
                         + ("\n".join(winner_lines) if winner_lines else "")
                     ),
-                    color=discord.Color.from_rgb(0, 0, 0)
+                    color=discord.Color.dark_gray()
                 )
                 await channel.send(embed=embed)
             return
@@ -2815,7 +2815,7 @@ def murder_lobby_embed(room):
     return make_embed(
         title=f"{title_emoji} Murder • Birthdaytime",
         description=description,
-        color=discord.Color.from_rgb(0, 0, 0)
+        color=discord.Color.dark_gray()
     )
 
 
@@ -2847,9 +2847,9 @@ def murder_morning_status_embed(room, death_text=""):
             + (dead_text[:1024] if dead_lines else "Chưa có người chết")
             + "\n\n**Các mem có 3 phút để thảo luận**"
         ),
-        color=discord.Color.from_rgb(0, 0, 0)
+        color=discord.Color.dark_gray()
     )
-    embed.set_footer(text="Murder • Birthdaytime")
+    add_standard_footer(embed)
     return embed
 
 
@@ -2865,7 +2865,7 @@ def murder_phase_embed(room, title, extra=""):
     desc = extra + "\n\n**<:emoji_21:1508473905499603144> Còn sống:** " + (", ".join(alive_lines) or "Không có")
     if dead_lines:
         desc += "\n**<:dead:1547577908149747732> Đã chết:** " + ", ".join(dead_lines)
-    return make_embed(title=title, description=desc, color=discord.Color.from_rgb(0, 0, 0))
+    return make_embed(title=title, description=desc, color=discord.Color.dark_gray())
 
 
 async def murder_send_roles(room):
@@ -2877,7 +2877,7 @@ async def murder_send_roles(room):
         embed = make_embed(
             title=f"{emoji} VAI CỦA M — MURDER",
             description=f"**Vai:** {emoji} **{name}**\n\n{info}\n\n🔒 Đừng cho người khác biết vai của bạn.",
-            color=discord.Color.from_rgb(0, 0, 0)
+            color=discord.Color.dark_gray()
         )
         try:
             await m.send(embed=embed)
@@ -2994,7 +2994,7 @@ async def murder_start_bomb(room):
                 f"Nhấn **Nhập mã gỡ boom** và nhập đúng mã trên.\n"
                 f"Sai mã vẫn không làm mất boom. Không gỡ kịp → 💥 **boom nổ**.",
             ),
-            color=discord.Color.from_rgb(0, 0, 0)
+            color=discord.Color.dark_gray()
         ), view=MurderBombView(room["room_id"], target, room["bomb_code"]))
     room["phase_task"] = asyncio.create_task(murder_bomb_timer(room["room_id"]))
 
@@ -3212,7 +3212,7 @@ async def murder_finish(room, winner, prefix=""):
         await channel.send(embed=make_embed(
             title="🏁 MURDER • KẾT THÚC",
             description=(prefix + "\n\n" if prefix else "") + result + "\n\n**🎭 DANH SÁCH VAI**\n" + "\n".join(role_lines),
-            color=discord.Color.from_rgb(0, 0, 0)
+            color=discord.Color.dark_gray()
         ))
 
 
@@ -3257,7 +3257,7 @@ async def help_command(interaction: discord.Interaction):
     embed = make_embed(
         title="📚 TRỢ GIÚP BOT",
         description="Danh sách các lệnh hiện có:",
-        color=discord.Color.from_rgb(0, 0, 0)
+        color=discord.Color.dark_gray()
     )
 
     embed.add_field(
@@ -3507,7 +3507,7 @@ class BauCuaBetModal(discord.ui.Modal, title="Đặt cược Bầu Cua"):
             return await interaction.response.send_message(f"❌ Bạn chỉ có **{balance:,} coin**.", ephemeral=True)
         if not zero_user: baucua_change_coins(uid, -amount)
         baucua_round["bets"].append({"user": interaction.user, "choice": self.choice, "amount": amount, "zero": zero_user})
-        await interaction.response.send_message(f"<a:verify:1548178353859596320> Đã đặt **{amount:,} coin** vào {BAUCUA_EMOJIS[self.choice]}. Ván sẽ kết thúc sau tối đa 1 phút.", ephemeral=True)
+        await interaction.response.send_message(f"<a:verify:1548178353859596320> Đã đặt **{amount:,} coin** vào {BAUCUA_EMOJIS[self.choice]}. Ván sẽ kết thúc sau tối đa 5 phút.", ephemeral=True)
 
 class BauCuaView(discord.ui.View):
     def __init__(self):
@@ -3532,7 +3532,7 @@ async def finish_baucua_round(channel):
         lines.append(f"{bet['user'].mention} — {BAUCUA_EMOJIS[bet['choice']]} `{bet['amount']:,}` → **{net:+,} coin**")
     desc=f"<a:baucau:1548522851324141578> **Kết quả:** {'  '.join(str(BAUCUA_EMOJIS[x]) for x in result)}\n\n"
     desc += "\n".join(lines) if lines else "Không có người đặt cược."
-    await channel.send(embed=make_embed(title=f"{BAUCUA_TITLE_EMOJI} BẢNG TỔNG KẾT SAU VÁN", description=desc, color=discord.Color.black()))
+    await channel.send(embed=make_embed(title=f"{BAUCUA_TITLE_EMOJI} BẢNG TỔNG KẾT SAU VÁN", description=desc, color=discord.Color.dark_gray()))
     baucua_round=None
 
 @bot.tree.command(name="baucua", description="Mở ván Bầu Cua trong 1 phút")
@@ -3541,7 +3541,7 @@ async def baucua(interaction: discord.Interaction):
     if baucua_round and baucua_round["open"]:
         return await interaction.response.send_message("❌ Đang có một ván Bầu Cua diễn ra.", ephemeral=True)
     baucua_round={"open":True,"bets":[]}
-    await interaction.response.send_message(embed=make_embed(title=f"{BAUCUA_TITLE_EMOJI} BẦU CUA TÔM CÁ", description="Đặt cược trong **60 giây**. Hết giờ bot tự quay và gửi bảng tổng kết màu đen.", color=discord.Color.black()), view=BauCuaView())
+    await interaction.response.send_message(embed=make_embed(title=f"{BAUCUA_TITLE_EMOJI} BẦU CUA TÔM CÁ", description="Đặt cược trong **1 phút**. Hết giờ bot tự quay và gửi bảng tổng kết màu xám.", color=discord.Color.dark_gray()), view=BauCuaView())
     await asyncio.sleep(BAUCUA_ROUND_SECONDS)
     if baucua_round and baucua_round["open"]: await finish_baucua_round(interaction.channel)
 
@@ -3551,7 +3551,7 @@ async def coin(interaction: discord.Interaction):
     await interaction.response.send_message(embed=make_embed(
         title="<a:emoji_45:1541782094714511400> SỐ DƯ COIN",
         description=f"{interaction.user.mention} đang có **{baucua_get_coins(interaction.user.id):,} coin**.",
-        color=discord.Color.black()
+        color=discord.Color.dark_gray()
     ))
 
 
@@ -3579,7 +3579,7 @@ class GiveConfirmView(discord.ui.View):
         embed = discord.Embed(
             title="<a:emoji_45:1541782094714511400> Cộng coin thành công",
             description=f"Đã cộng **{self.amount:,} coin** cho {self.member.mention}.",
-            color=discord.Color.from_rgb(0, 0, 0)
+            color=discord.Color.dark_gray()
         )
         embed.add_field(name="Số dư mới", value=f"`{balance:,} coin`", inline=False)
         await interaction.response.edit_message(content=None, embed=embed, view=None)
@@ -3602,7 +3602,7 @@ async def give_coin(ctx, member: discord.Member, amount: int):
     embed = discord.Embed(
         title="<a:emoji_45:1541782094714511400> Xác nhận cộng coin",
         description=f"{ctx.author.mention} muốn cộng **{amount:,} coin** cho {member.mention}.\n\nBấm **Xác nhận** để thực hiện.",
-        color=discord.Color.from_rgb(0, 0, 0)
+        color=discord.Color.dark_gray()
     )
     await ctx.send(embed=embed, view=GiveConfirmView(ctx, member, amount))
 
@@ -3635,7 +3635,7 @@ class AnXinConfirmView(discord.ui.View):
             return
         baucua_change_coins(self.recipient.id, self.amount)
         balance = baucua_get_coins(self.recipient.id)
-        embed = discord.Embed(title="<a:verify:1548178353859596320> Nhận coin thành công", description=f"{self.recipient.mention} đã nhận **{self.amount:,} coin**.", color=discord.Color.black())
+        embed = discord.Embed(title="<a:verify:1548178353859596320> Nhận coin thành công", description=f"{self.recipient.mention} đã nhận **{self.amount:,} coin**.", color=discord.Color.dark_gray())
         embed.add_field(name="Số dư mới", value=f"`{balance:,} coin`", inline=False)
         await interaction.response.edit_message(content=None, embed=embed, view=None)
 
@@ -3657,7 +3657,7 @@ async def an_xin(ctx, member: discord.Member, amount: int):
     if member.id == 1548490039158251531:
         await ctx.send("❌ ID này luôn có 0 coin.")
         return
-    embed = discord.Embed(title="<a:verify:1548178353859596320> Xác nhận nhận coin", description=f"{ctx.author.mention} muốn xin **{amount:,} coin** cho {member.mention}.\n\nChỉ {member.mention} được bấm xác nhận.", color=discord.Color.black())
+    embed = discord.Embed(title="<a:verify:1548178353859596320> Xác nhận nhận coin", description=f"{ctx.author.mention} muốn xin **{amount:,} coin** cho {member.mention}.\n\nChỉ {member.mention} được bấm xác nhận.", color=discord.Color.dark_gray())
     await ctx.send(embed=embed, view=AnXinConfirmView(ctx, member, amount))
 
 @an_xin.error
