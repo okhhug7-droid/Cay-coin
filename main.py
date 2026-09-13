@@ -3447,14 +3447,14 @@ db_cursor.execute("""CREATE TABLE IF NOT EXISTS baucua_coins (user_id INTEGER PR
 db_conn.commit()
 
 BAUCUA_EMOJIS = {
-    "bau": discord.PartialEmoji(name="bau", id=1548524879748272250),
+    "bau": discord.PartialEmoji(name="bau", id=1262633900744638516),
     "cua": discord.PartialEmoji(name="crab", id=1548515170203209728, animated=True),
     "tom": discord.PartialEmoji(name="tom", id=1548525583711871067),
     "ca": discord.PartialEmoji(name="fish", id=1548514999347974164, animated=True),
     "nai": discord.PartialEmoji(name="deer", id=1548514158994259978, animated=True),
     "ga": discord.PartialEmoji(name="rooster", id=1548514657889820762, animated=True),
 }
-BAUCUA_TITLE_EMOJI = discord.PartialEmoji(name="baucuatomca", id=1261790169011458139, animated=True)
+BAUCUA_TITLE_EMOJI = discord.PartialEmoji(name="baucau", id=1548522851324141578, animated=True)
 
 
 def baucua_get_coins(user_id: int) -> int:
