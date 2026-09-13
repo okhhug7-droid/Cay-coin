@@ -3338,7 +3338,7 @@ async def help_command(interaction: discord.Interaction):
 # ==================== TEST GAME: NGƯỜI CHƠI GIẢ ====================
 TEST_GAME_TASKS = {}
 
-@bot.command(name="test")
+@bot.command(name="testgame")
 @commands.cooldown(1, 10, commands.BucketType.user)
 async def test_game(ctx, game: str = "masoi", so_luong: int = 8):
     """Tạo ván test tự động với người chơi giả.
@@ -3350,7 +3350,7 @@ async def test_game(ctx, game: str = "masoi", so_luong: int = 8):
     """
     game = game.lower().strip()
     if game not in {"masoi", "murder"}:
-        return await ctx.send("❌ Chọn game `masoi` hoặc `murder`. Ví dụ: `!test masoi 8`")
+        return await ctx.send("❌ Chọn game `masoi` hoặc `murder`. Ví dụ: `!testgame masoi 8`")
     so_luong = max(5, min(int(so_luong), 15))
     old = TEST_GAME_TASKS.get(ctx.channel.id)
     if old and not old.done():
@@ -3435,7 +3435,7 @@ async def test_game_error(ctx, error):
     if isinstance(error, commands.CommandOnCooldown):
         await ctx.send(f"⏳ Chờ {error.retry_after:.1f} giây rồi thử lại.")
     elif isinstance(error, commands.BadArgument):
-        await ctx.send("❌ Số người chơi phải là số. Ví dụ: `!test masoi 8`")
+        await ctx.send("❌ Số người chơi phải là số. Ví dụ: `!testgame masoi 8`")
     else:
         await ctx.send(f"❌ Lỗi test game: `{type(error).__name__}: {error}`")
 
@@ -3447,14 +3447,14 @@ db_cursor.execute("""CREATE TABLE IF NOT EXISTS baucua_coins (user_id INTEGER PR
 db_conn.commit()
 
 BAUCUA_EMOJIS = {
-    "bau": discord.PartialEmoji(name="bau", id=1262633900744638516),
+    "bau": discord.PartialEmoji(name="bau", id=1548524879748272250),
     "cua": discord.PartialEmoji(name="crab", id=1548515170203209728, animated=True),
     "tom": discord.PartialEmoji(name="tom", id=1548525583711871067),
     "ca": discord.PartialEmoji(name="fish", id=1548514999347974164, animated=True),
     "nai": discord.PartialEmoji(name="deer", id=1548514158994259978, animated=True),
     "ga": discord.PartialEmoji(name="rooster", id=1548514657889820762, animated=True),
 }
-BAUCUA_TITLE_EMOJI = discord.PartialEmoji(name="baucau", id=1548522851324141578, animated=True)
+BAUCUA_TITLE_EMOJI = discord.PartialEmoji(name="baucuatomca", id=1261790169011458139, animated=True)
 
 
 def baucua_get_coins(user_id: int) -> int:
@@ -3482,7 +3482,7 @@ def baucua_change_coins(user_id: int, amount: int):
     return new_value
 
 
-BAUCUA_ROUND_SECONDS = 30
+BAUCUA_ROUND_SECONDS = 60
 baucua_round = None
 
 class BauCuaBetModal(discord.ui.Modal, title="Đặt cược Bầu Cua"):
@@ -3507,7 +3507,7 @@ class BauCuaBetModal(discord.ui.Modal, title="Đặt cược Bầu Cua"):
             return await interaction.response.send_message(f"❌ Bạn chỉ có **{balance:,} coin**.", ephemeral=True)
         if not zero_user: baucua_change_coins(uid, -amount)
         baucua_round["bets"].append({"user": interaction.user, "choice": self.choice, "amount": amount, "zero": zero_user})
-        await interaction.response.send_message(f"<a:verify:1548178353859596320> Đã đặt **{amount:,} coin** vào {BAUCUA_EMOJIS[self.choice]}. Ván sẽ kết thúc sau 30 giây.", ephemeral=True)
+        await interaction.response.send_message(f"<a:verify:1548178353859596320> Đã đặt **{amount:,} coin** vào {BAUCUA_EMOJIS[self.choice]}. Ván sẽ kết thúc sau 1 phút.", ephemeral=True)
 
 class BauCuaView(discord.ui.View):
     def __init__(self):
@@ -3516,11 +3516,7 @@ class BauCuaView(discord.ui.View):
             b=discord.ui.Button(label=label, emoji=BAUCUA_EMOJIS[key], custom_id=f"baucua_{key}", style=discord.ButtonStyle.secondary, row=row)
             b.callback=self._make_callback(key); self.add_item(b)
     def _make_callback(self, choice):
-        async def callback(interaction):
-            global baucua_round
-            if not baucua_round or not baucua_round.get("open"):
-                return await interaction.response.send_message("❌ Ván đã kết thúc, không thể đặt cược nữa.", ephemeral=True)
-            await interaction.response.send_modal(BauCuaBetModal(choice))
+        async def callback(interaction): await interaction.response.send_modal(BauCuaBetModal(choice))
         return callback
 
 async def finish_baucua_round(channel):
@@ -3534,25 +3530,9 @@ async def finish_baucua_round(channel):
         if not bet["zero"] and matches: baucua_change_coins(bet["user"].id, bet["amount"]+reward)
         net=reward if matches else -bet["amount"]
         lines.append(f"{bet['user'].mention} — {BAUCUA_EMOJIS[bet['choice']]} `{bet['amount']:,}` → **{net:+,} coin**")
-    title=f"{BAUCUA_TITLE_EMOJI} Bầu cua  • Birthdaytime"
-    # Hiện từng kết quả cách nhau 1 giây bằng cách chỉnh sửa cùng một Embed.
-    shown=[]
-    message=await channel.send(embed=make_embed(
-        title=title,
-        description="Kết quả:\n" + str(BAUCUA_TITLE_EMOJI),
-        color=discord.Color.dark_grey()
-    ))
-    for item in result:
-        await asyncio.sleep(1)
-        shown.append(str(BAUCUA_EMOJIS[item]))
-        await message.edit(embed=make_embed(
-            title=title,
-            description="Kết quả:\n" + "  ".join(shown),
-            color=discord.Color.dark_grey()
-        ))
-    desc="Kết quả:\n" + "  ".join(shown) + "\n\n"
+    desc=f"<a:baucau:1548522851324141578> **Kết quả:** {'  '.join(str(BAUCUA_EMOJIS[x]) for x in result)}\n\n"
     desc += "\n".join(lines) if lines else "Không có người đặt cược."
-    await message.edit(embed=make_embed(title=title, description=desc, color=discord.Color.dark_grey()))
+    await channel.send(embed=make_embed(title=f"{BAUCUA_TITLE_EMOJI} Bầu cua  • Birthdaytime", description=desc, color=discord.Color.from_rgb(0, 0, 0)))
     baucua_round=None
 
 @bot.tree.command(name="baucua", description="Mở ván Bầu Cua trong 1 phút")
@@ -3697,6 +3677,164 @@ async def an_xin(ctx, member: discord.Member, amount: int):
 async def an_xin_error(ctx, error):
     if isinstance(error, (commands.MissingRequiredArgument, commands.BadArgument)):
         await ctx.send("❌ Dùng đúng cú pháp: `!anxin @người_dùng số_coin`")
+
+
+# ============================================================
+# THÔNG BÁO NHIỆM VỤ ORB
+# ============================================================
+ORB_CONFIG_FILE = "quest_config.json"
+
+def _load_quest_config():
+    if os.path.exists(ORB_CONFIG_FILE):
+        try:
+            with open(ORB_CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+def _save_quest_config(data):
+    with open(ORB_CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+_quest_config = _load_quest_config()
+ORB_CHANNEL_ID = _quest_config.get("quest_channel_id")
+
+
+class QuestView(discord.ui.View):
+    def __init__(self, quest_url: str):
+        super().__init__(timeout=None)
+
+        # Nút mở trực tiếp link nhiệm vụ
+        self.add_item(
+            discord.ui.Button(
+                label="View Quest",
+                style=discord.ButtonStyle.link,
+                emoji="🔗",
+                url=quest_url
+            )
+        )
+
+
+def tao_quest_embed(
+    ten_nhiem_vu: str,
+    mo_ta: str,
+    reward: str,
+    quest_id: str,
+    thoi_gian_ket_thuc: str
+):
+    embed = discord.Embed(
+        title="<a:quest:1548628005012906047> nhiệm vụ mới nè các mem!",
+        description=f"**{ten_nhiem_vu}**\n\n{mo_ta}",
+        color=0x5865F2
+    )
+
+    embed.add_field(
+        name="<a:orb:1548623915121770577> Reward",
+        value=f"**{reward}**",
+        inline=False
+    )
+    embed.add_field(
+        name="<a:thongbao:1548169803540201582> Ends",
+        value=thoi_gian_ket_thuc,
+        inline=False
+    )
+    embed.add_field(
+        name="<a:lightningbolt:1508330216181731441> Quest ID",
+        value=f"`{quest_id}`",
+        inline=False
+    )
+
+    embed.set_footer(text="Auto Quests Bot • Discord Quest")
+    return embed
+
+
+async def thong_bao_orb(
+    ten_nhiem_vu: str,
+    mo_ta: str,
+    reward: str = "Orb",
+    quest_id: str = "Chưa có",
+    thoi_gian_ket_thuc: str = "Chưa có",
+    quest_url: str | None = None
+):
+    """Gửi embed nhiệm vụ Orb vào kênh thông báo."""
+    channel = bot.get_channel(ORB_CHANNEL_ID)
+
+    if channel is None:
+        print("Chưa setup kênh Quest hoặc không tìm thấy kênh.")
+        return False
+
+    embed = tao_quest_embed(
+        ten_nhiem_vu=ten_nhiem_vu,
+        mo_ta=mo_ta,
+        reward=reward,
+        quest_id=quest_id,
+        thoi_gian_ket_thuc=thoi_gian_ket_thuc
+    )
+
+    if quest_url:
+        await channel.send(embed=embed, view=QuestView(quest_url))
+    else:
+        await channel.send(embed=embed)
+
+    return True
+
+
+@bot.tree.command(name="setuporb", description="Cài kênh nhận thông báo Quest")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setup_quest(interaction: discord.Interaction):
+    """Cài kênh nhận thông báo Quest bằng slash command /setuporb."""
+    global ORB_CHANNEL_ID
+
+    ORB_CHANNEL_ID = interaction.channel_id
+    _quest_config["quest_channel_id"] = ORB_CHANNEL_ID
+    _save_quest_config(_quest_config)
+
+    channel = interaction.channel
+    channel_mention = channel.mention if channel else f"<#{ORB_CHANNEL_ID}>"
+
+    await interaction.response.send_message(
+        f"<a:verify:1548178353859596320> Đã setup kênh Quest: {channel_mention}",
+        ephemeral=True
+    )
+
+
+@bot.command(name="test")
+@commands.has_permissions(administrator=True)
+async def test_quest(ctx, quest_url: str):
+    """Test embed Quest: !test <link_nhiem_vu>"""
+    if not (quest_url.startswith("https://") or quest_url.startswith("http://")):
+        await ctx.send("❌ Link nhiệm vụ không hợp lệ.", delete_after=5)
+        return
+
+    sent = await thong_bao_orb(
+        ten_nhiem_vu="Marvel Rivals S10: verify school email, get 10 free trial costumes",
+        mo_ta="Hoàn thành nhiệm vụ để nhận phần thưởng.",
+        reward="700 Orbs",
+        quest_id="1546355323118420009",
+        thoi_gian_ket_thuc="lúc 07:00 Thứ Hai, 28 tháng 9, 2026",
+        quest_url=quest_url
+    )
+
+    if sent:
+        await ctx.send("<a:verify:1548178353859596320> Đã gửi bảng nhiệm vụ!", delete_after=5)
+
+
+@bot.command(name="testorb")
+@commands.has_permissions(administrator=True)
+async def test_orb(ctx, quest_url: str):
+    """Alias cũ của !test."""
+    await test_quest(ctx, quest_url)
+
+
+@test_quest.error
+@test_orb.error
+async def test_quest_error(ctx, error):
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❌ Dùng: `!test <link_nhiem_vu>`", delete_after=5)
+    elif isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ Bạn không có quyền dùng lệnh này.", delete_after=5)
+
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 if __name__ == "__main__":
