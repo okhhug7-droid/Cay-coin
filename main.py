@@ -177,7 +177,7 @@ async def keep_voice_connected(guild_id: int, channel_id: int):
         except asyncio.CancelledError:
             return
         except Exception as e:
-            print(f"⚠️ Treo call guild {guild_id}: {e}")
+            print(f"⚠️  Treo call guild {guild_id}: {e}")
             await asyncio.sleep(5)
 
 def start_voice_keepalive(guild_id: int, channel_id: int):
@@ -232,7 +232,7 @@ SPECIAL_ADMIN_ID = 1180179460339810314
 # GIỚI HẠN BOT CHỈ HOẠT ĐỘNG TRONG 1 SERVER (GUILD)
 # ============================================================
 ALLOWED_GUILD_ID = 1503922700408586240
-UNAUTHORIZED_GUILD_MESSAGE = "<a:emoji_44:1541290870966325318> T về birthdaytime để ngủ đây! Bye"
+UNAUTHORIZED_GUILD_MESSAGE = "<a:emoji_44:1541290870966325318> Đây là đâu, BirthdayTime mới là nhà của t"
 
 async def leave_unauthorized_guild(guild: discord.Guild):
     """Báo trong server không được phép rồi tự rời server."""
@@ -256,7 +256,7 @@ async def leave_unauthorized_guild(guild: discord.Guild):
             except (discord.Forbidden, discord.HTTPException):
                 continue
     except Exception as e:
-        print(f"⚠️ Lỗi gửi tin rời guild {guild.id}: {e}")
+        print(f"⚠️  Lỗi gửi tin rời guild {guild.id}: {e}")
 
     await asyncio.sleep(0.5)
 
@@ -264,7 +264,7 @@ async def leave_unauthorized_guild(guild: discord.Guild):
         await guild.leave()
         print(f"🚪 Đã tự động rời guild không được phép: {guild.id} ({guild.name})")
     except Exception as e:
-        print(f"⚠️ Không thể rời guild {guild.id}: {e}")
+        print(f"⚠️  Không thể rời guild {guild.id}: {e}")
 
 async def enforce_guild_allowlist():
     for guild in list(bot.guilds):
@@ -427,12 +427,12 @@ async def setlevelconfig(
         XP_BG_FILE = saved_bg
 
     embed = make_embed(
-        title="✨ Cập Nhật Cấu Hình Lên Cấp Thành Công",
+        title="<a:verify:1548178353859596320> Cập Nhật Cấu Hình Lên Cấp Thành Công",
         description="Đã lưu các thiết lập hệ thống thăng cấp cho server của bạn!",
         color=discord.Color.gold()
     )
     if channel:
-        embed.add_field(name="📢 Kênh thông báo", value=channel.mention, inline=False)
+        embed.add_field(name="<a:thongbao:1548169803540201582> Kênh thông báo", value=channel.mention, inline=False)
     if message:
         embed.add_field(name="💬 Mẫu tin nhắn", value=message, inline=False)
     embed.add_field(
@@ -478,7 +478,7 @@ class SingleLevelRoleModal(discord.ui.Modal, title="📌 Gắn ID Role Cho Mốc
 
         embed, view = await LevelManagementDashboard.create_dashboard(interaction.guild)
         await interaction.response.edit_message(embed=embed, view=view)
-        await interaction.followup.send(f"✨ Đã gán thành công role {role.mention} cho **Level {self.target_level}**!", ephemeral=True)
+        await interaction.followup.send(f"<a:verify:1548178353859596320> Đã gán thành công role {role.mention} cho **Level {self.target_level}**!", ephemeral=True)
 
 
 class LevelSelectDropdown(discord.ui.Select):
@@ -920,7 +920,7 @@ async def setwelcome(
 async def setboost(interaction: discord.Interaction, channel: discord.TextChannel, message: str):
     server_boost_channels[interaction.guild.id] = channel.id
     BOOST_CONFIG["message"] = message
-    await interaction.response.send_message("✅ Đã cập nhật cấu hình Boost!", ephemeral=True)
+    await interaction.response.send_message("<a:verify:1548178353859596320> Đã cập nhật cấu hình Boost!", ephemeral=True)
 
 
 @bot.tree.command(name="setboostrole", description="Cài đặt role khi Boost (Admin)")
@@ -999,7 +999,6 @@ class AnnouncementModal(discord.ui.Modal, title="<a:thongbao:1548169803540201582
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
         await interaction.response.defer(ephemeral=True, thinking=True)
         db_cursor.execute(
             "SELECT channel_id FROM announcement_channels WHERE guild_id = ?",
@@ -1133,7 +1132,7 @@ async def check_birthdays():
             if dob_str.startswith(today_str):
                 member = guild.get_member(user_id)
                 if member:
-                    embed = make_embed(title="🎉 CHÚC MỪNG SINH NHẬT! 🎂", description=f"Chúc mừng sinh nhật {member.mention}! 🥳", color=discord.Color.pink())
+                    embed = make_embed(title="🎉 CHÚC MỪNG SINH NHẬT! 🎂", description=f" {member} Đã thêm tuổi mới nha! Chúc mem càng ngày tốt đẹp trong công việc và việc học nha! 🥳", color=discord.Color.pink())
                     if os.path.exists(BIRTHDAY_GIF_PATH):
                         await channel.send(embed=embed, file=discord.File(BIRTHDAY_GIF_PATH, filename="hb_gif.gif"))
                     else:
@@ -1276,7 +1275,7 @@ class NhanRoleModal(discord.ui.Modal, title="🎭 NHẬN ROLE"):
 
         if role in interaction.user.roles:
             await interaction.response.send_message(
-                f"ℹ️ Bạn đã có {role.mention} rồi.",
+                f"<a:verify:1548178353859596320> Bạn đã có {role.mention} rồi.",
                 ephemeral=True
             )
             return
@@ -1323,7 +1322,7 @@ async def afk(ctx, *, reason="Bận"):
     }
     await ctx.send(
         f"<a:bye:1548151079018172486> **{ctx.author.display_name}** đã bật AFK.\n"
-        f"📝 Lý do: **{afk_users[ctx.author.id]['reason']}**"
+        f" Lý do: **{afk_users[ctx.author.id]['reason']}**"
     )
 
 
@@ -1359,7 +1358,7 @@ async def handle_afk_message(message: discord.Message):
         reason = data.get("reason", "Bận")
         await message.channel.send(
             f"<a:bye:1548151079018172486> **{member.display_name}** đang AFK.\n"
-            f"📝 Lý do: **{reason}**"
+            f" Lý do: **{reason}**"
         )
 
 
@@ -1897,7 +1896,7 @@ class QRBankModal(discord.ui.Modal, title="🏦  TẠO QR CHUYỂN KHOẢN"):
         )
 
         embed = make_embed(
-            title="✅ XÁC THỰC TÀI KHOẢN THÀNH CÔNG",
+            title="<a:verify:1548178353859596320> XÁC THỰC TÀI KHOẢN THÀNH CÔNG",
             description="Thông tin tài khoản đã được VietQR xác thực. QR bên dưới có thể dùng để chuyển khoản.",
             color=discord.Color.green(),
         )
@@ -2121,7 +2120,7 @@ def masoi_phase_embed(phase, seconds_left=None):
     else:
         embed.description = f"### ⏱️ Thời lượng **{duration}**\n{status}"
     embed.add_field(name="📜 Trạng thái", value=tip, inline=False)
-    embed.add_field(name="☀️ Ngày", value="5:00", inline=True)
+    embed.add_field(name="☀️ Ngày", value="3:00", inline=True)
     embed.add_field(name="🌙 Đêm", value="2:00", inline=True)
     return embed
 
@@ -2179,7 +2178,7 @@ async def masoi_resolve_night(room):
     try:
         victim_member = guild.get_member(victim_id) if guild else None
         if victim_member:
-            await victim_member.send("💀 Bạn đã bị giết trong ván Ma Sói. Bạn không thể nhìn thấy tên Murder và Ma Sói.")
+            await victim_member.send("<:dead:1547577908149747732> Bạn đã bị giết trong ván Ma Sói. Bạn không thể nhìn thấy tên của Ma Sói.")
     except discord.Forbidden:
         pass
     member = guild.get_member(victim_id) if guild else None
@@ -2243,7 +2242,7 @@ async def masoi_phase_timer(room_id, phase, seconds):
             game_finished = await masoi_finish_game(room, winner)
             channel = bot.get_channel(room.get("channel_id"))
             if channel and game_finished:
-                emoji = "🐺" if winner == "Ma Sói" else "🏘️"
+                emoji = "<:werewolf:1547564934299390082>" if winner == "Ma Sói" else "<:lang:1547587120825372752>"
                 guild = bot.get_guild(room.get("guild_id"))
                 names = []
                 for uid in room.get("players", []):
@@ -2277,7 +2276,7 @@ async def masoi_phase_timer(room_id, phase, seconds):
             if night_result:
                 death_embed = make_embed(
                     title=f"{WEREWOLF_BITE_EMOJI}  MA SÓI ĐÃ CẮN!",
-                    description=(f"### 💀 **{night_result['victim_name']}** đã bị Ma Sói cắn.\n"
+                    description=(f"### <:dead:1547577908149747732> **{night_result['victim_name']}** đã bị Ma Sói cắn.\n"
                                  f"{WEREWOLF_BITE_EMOJI} Người chơi này **đã rời khỏi phòng**."),
                     color=discord.Color.red()
                 )
@@ -2294,7 +2293,7 @@ async def masoi_phase_timer(room_id, phase, seconds):
             if target_phase == "day":
                 embed.description = "### 🗣️ Chat đã mở\n**3 phút** thảo luận và bỏ phiếu."
             else:
-                embed.description = "### 🤫 Chat đã khóa\n**2 phút** ban đêm bắt đầu."
+                embed.description = "### <:immom:1506650421677260901> Chat đã khóa\n**2 phút** ban đêm bắt đầu."
             if not ok:
                 embed.add_field(name="⚠️ Cảnh báo", value=err[:1024], inline=False)
             await channel.send(embed=embed)
@@ -2317,7 +2316,7 @@ class MasoiRoleView(discord.ui.View):
 
 class MasoiDayButton(discord.ui.Button):
     def __init__(self, room_id):
-        super().__init__(label="☀️ NGÀY • 5 PHÚT", style=discord.ButtonStyle.success, custom_id=f"masoi_day_{room_id}")
+        super().__init__(label="☀️ NGÀY • 3 PHÚT", style=discord.ButtonStyle.success, custom_id=f"masoi_day_{room_id}")
         self.room_id = room_id
 
     async def callback(self, interaction: discord.Interaction):
@@ -2419,7 +2418,7 @@ class MasoiActionSelect(discord.ui.Select):
         target = guild.get_member(target_id) if guild else None
         target_name = target.display_name if target else f"<@{target_id}>"
         await interaction.response.send_message(
-            f"✅ **{masoi_action_label(self.role, self.phase)}**\n🎯 Mục tiêu: **{target_name}**\n🔒 Lựa chọn đã được ghi nhận riêng tư.",
+            f"<a:verify:1548178353859596320> **{masoi_action_label(self.role, self.phase)}**\n🎯 Mục tiêu: **{target_name}**\n🔒 Lựa chọn đã được ghi nhận riêng tư.",
             ephemeral=True
         )
 
@@ -2754,7 +2753,7 @@ class MurderTargetSelect(discord.ui.Select):
         if interaction.user.id != self.actor_id:
             return await interaction.response.send_message("❌ Đây không phải bảng hành động của m.", ephemeral=True)
         if self.actor_id in room["dead"]:
-            return await interaction.response.send_message("💀 M đã chết rồi.", ephemeral=True)
+            return await interaction.response.send_message("<:dead:1547577908149747732> Bạn đã chết rồi.", ephemeral=True)
         target = int(self.values[0])
         if target == 0 or target not in murder_target_options(room, self.actor_id, self.action):
             return await interaction.response.send_message("❌ Mục tiêu không hợp lệ.", ephemeral=True)
@@ -2763,11 +2762,11 @@ class MurderTargetSelect(discord.ui.Select):
         target_member = murder_member(room, target)
         target_name = target_member.mention if target_member else f"<@{target}>"
         if self.action == "kill":
-            text = f"🔪 Đã chọn ám sát {target_name}."
+            text = f"<:emoji_75:1547988327104254012> Đã chọn ám sát {target_name}."
         elif self.action == "investigate":
             # Thám tử nhận manh mối ngay trong DM, nhưng không công khai kết quả.
             is_murder = room["roles"].get(target) == "Murder"
-            clue = "<a:thongbao:1548169803540201582> Có dấu hiệu cho thấy người này thuộc phe Murder." if is_murder else "🟢 Manh mối cho thấy người này không thuộc phe Murder."
+            clue = "<a:thongbao:1548169803540201582> Có dấu hiệu cho thấy người này thuộc phe Murder." if is_murder else "<:__:1506650257272868865> Manh mối cho thấy người này không thuộc phe Murder."
             room.setdefault("detective_clues", {})[self.actor_id] = clue
             text = f"<:__:1506650257272868865> Đã điều tra {target_name}.\n{clue}"
         elif self.action == "doctor":
@@ -2847,7 +2846,7 @@ class MurderLobbyView(discord.ui.View):
         if not room or room.get("started"):
             return await interaction.response.send_message("❌ Phòng đã bắt đầu hoặc không còn tồn tại.", ephemeral=True)
         if interaction.user.id in room["players"]:
-            return await interaction.response.send_message("M đã ở trong phòng rồi.", ephemeral=True)
+            return await interaction.response.send_message("Bạn đã ở trong phòng rồi.", ephemeral=True)
         if len(room["players"]) >= room["max_players"]:
             return await interaction.response.send_message("❌ Phòng đã đủ 15 người.", ephemeral=True)
         room["players"].append(interaction.user.id)
@@ -2963,7 +2962,7 @@ def murder_phase_embed(room, title, extra=""):
     for uid in room["dead"]:
         m = murder_member(room, uid)
         dead_lines.append(m.mention if m else f"<@{uid}>")
-    desc = extra + "\n\n**🟢 Còn sống:** " + (", ".join(alive_lines) or "Không có")
+    desc = extra + "\n\n**<:emoji_21:1508473905499603144> Còn sống:** " + (", ".join(alive_lines) or "Không có")
     if dead_lines:
         desc += "\n**<:dead:1547577908149747732> Đã chết:** " + ", ".join(dead_lines)
     return make_embed(title=title, description=desc, color=discord.Color.from_rgb(0, 0, 0))
@@ -2977,7 +2976,7 @@ async def murder_send_roles(room):
         emoji, name, info = MURDER_ROLE_INFO[role]
         embed = make_embed(
             title=f"{emoji} VAI CỦA M — MURDER",
-            description=f"**Vai:** {emoji} **{name}**\n\n{info}\n\n🔒 Đừng cho người khác biết vai của m.",
+            description=f"**Vai:** {emoji} **{name}**\n\n{info}\n\n🔒 Đừng cho người khác biết vai của bạn.",
             color=discord.Color.from_rgb(0, 0, 0)
         )
         try:
@@ -2985,13 +2984,13 @@ async def murder_send_roles(room):
             if role == "Murder":
                 await m.send("<:emoji_75:1547988327104254012> **ĐÊM:** Chọn 1 người để ám sát.", view=MurderActionView(room["room_id"], uid, "kill"))
             elif role == "Thám tử":
-                await m.send("<:emoji_71:1547988235127365772> **ĐÊM:** Chọn 1 người để điều tra. M sẽ nhận **1 manh mối**.", view=MurderActionView(room["room_id"], uid, "investigate"))
+                await m.send("<:emoji_71:1547988235127365772> **ĐÊM:** Chọn 1 người để điều tra. Bạn sẽ nhận **1 manh mối**.", view=MurderActionView(room["room_id"], uid, "investigate"))
             elif role == "Bác sĩ":
                 await m.send("<:emoji_73:1547988300235800606> **ĐÊM:** Chọn 1 người để chữa trị. Nếu đúng mục tiêu Murder chọn, người đó sống.", view=MurderActionView(room["room_id"], uid, "doctor"))
             elif role == "Bảo vệ":
-                await m.send("<:protect:1547583282034770000> **ĐÊM:** Chọn 1 người để bảo vệ. M có thể **tự bảo vệ chính mình**.", view=MurderActionView(room["room_id"], uid, "guard"))
+                await m.send("<:protect:1547583282034770000> **ĐÊM:** Chọn 1 người để bảo vệ. Bạn có thể **tự bảo vệ chính mình**.", view=MurderActionView(room["room_id"], uid, "guard"))
             else:
-                await m.send("🌙 **Đêm nay:** M vô năng (thất nghiệp). Không có kỹ năng, hãy chờ sáng và tìm Murder.")
+                await m.send("🌙 **Đêm nay:** Bạn  vô năng (thất nghiệp). Không có kỹ năng, hãy chờ sáng và tìm Murder.")
         except discord.Forbidden:
             print(f"[MURDER] Không thể DM role cho {uid}.")
 
@@ -3137,7 +3136,7 @@ async def murder_continue_after_bomb(room):
     channel = bot.get_channel(room["channel_id"])
     await murder_send_detective_morning(room)
     reveal = room.get("detective_morning_reveal")
-    reveal_text = "🔎 Thám tử nhận được một manh mối riêng qua DM." if reveal else "🔎 Đêm qua không có manh mối hành động đặc biệt."
+    reveal_text = "<:__:1506650257272868865> Thám tử nhận được một manh mối riêng qua DM." if reveal else "🔎 Đêm qua không có manh mối hành động đặc biệt."
     room["detective_morning_reveal"] = None
     if channel:
         # Bảng sáng giống Ma Sói: thông báo kết quả đêm + danh sách sống/chết.
@@ -3145,7 +3144,7 @@ async def murder_continue_after_bomb(room):
         await channel.send(embed=murder_phase_embed(
             room,
             "☀️ NGÀY — THẢO LUẬN & BỎ PHIẾU",
-            "🗳️ Dùng `/murdervote` để bỏ phiếu người mà m nghi là Murder. Thời gian: **3 phút**."
+            "🗳️ Thời gian thảo luận đã kết thúc. Hệ thống tự động mở bỏ phiếu Murder trong **30 giây**."
         ))
     room["phase_task"] = asyncio.create_task(murder_day_timer(room["room_id"]))
 
@@ -3182,7 +3181,7 @@ async def murder_resolve_night(room):
         victim_member = murder_member(room, kill_target)
         try:
             if victim_member:
-                await victim_member.send("💀 Bạn đã bị giết trong ván Murder. Bạn không thể nhìn thấy tên Murder và Ma Sói.")
+                await victim_member.send("<:dead:1547577908149747732> Bạn đã bị giết trong ván Murder. Bạn không thể nhìn thấy tên của Murder .")
         except discord.Forbidden:
             pass
 
@@ -3215,11 +3214,11 @@ class MurderVoteButton(discord.ui.Button):
         if not room or room.get("game_finished") or not room.get("voting_open"):
             return await interaction.response.send_message("⏳ Đã hết thời gian bỏ phiếu.", ephemeral=True)
         if interaction.user.id not in murder_alive(room):
-            return await interaction.response.send_message("💀 Người chết không được bỏ phiếu.", ephemeral=True)
+            return await interaction.response.send_message("<:dead:1547577908149747732> Người chết không được bỏ phiếu.", ephemeral=True)
         if self.target_id not in murder_alive(room) or self.target_id == interaction.user.id:
             return await interaction.response.send_message("❌ Mục tiêu không hợp lệ.", ephemeral=True)
         room.setdefault("votes", {})[interaction.user.id] = self.target_id
-        await interaction.response.send_message("✅ Đã ghi nhận phiếu bí mật.", ephemeral=True)
+        await interaction.response.send_message("<a:verify:1548178353859596320> Đã ghi nhận phiếu bí mật.", ephemeral=True)
 
 class MurderVoteView(discord.ui.View):
     def __init__(self, room_id):
@@ -3362,22 +3361,22 @@ async def help_command(interaction: discord.Interaction):
     )
 
     embed.add_field(
-        name="🔪 MURDER",
-        value=(
-            "`/murder` — Tạo phòng Murder (5–15 người)\n"
-            "`/murdervote <member>` — Bỏ phiếu trong ban ngày\n"
-            "Vai: Murder • Thám tử • Bác sĩ • Bảo vệ • Người thường (thất nghiệp)"
-        ),
-        inline=False
-    )
+    name="🔪 MURDER",
+    value=(
+        "`/murder` — Tạo phòng Murder (5–15 người)\n"
+        "🗳️ Hệ thống tự động mở bỏ phiếu sau khi hết thời gian thảo luận\n"
+        "Vai: Murder • Thám tử • Bác sĩ • Bảo vệ • Người thường (thất nghiệp)"
+       ),
+       inline=False
+   )
 
     embed.add_field(
-        name="🐺 MA SÓI",
-        value=(
-            "`/masoi` — Tạo phòng Ma Sói\n"
-            "`/nhanrole` — Nhận Role tự nhận\n"
-        ),
-        inline=False
+       name="🐺 MA SÓI",
+       value=(
+         "`/masoi` — Tạo phòng Ma Sói\n"
+         "`/nhanrole` — Nhận Role tự nhận\n"
+       ),
+       inline=False
     )
 
     embed.add_field(
