@@ -1529,9 +1529,7 @@ async def finish_baucua_round(channel, game_message=None, view=None):
             title='🎲 Bầu cua • BirthdayTime',
             description=(
                 'BirthdayTime nhà cái đến từ Châu Phi\n\n'
-                '<:lock:1548990424067080223> **Bạn đã hết thời gian đặt cược.**\n\n'
-                f'{BAUCUA_EMOJIS["nai"]} Nai    {BAUCUA_EMOJIS["bau"]} Bầu    {BAUCUA_EMOJIS["ga"]} Gà\n'
-                f'{BAUCUA_EMOJIS["ca"]} Cá    {BAUCUA_EMOJIS["cua"]} Cua    {BAUCUA_EMOJIS["tom"]} Tôm'
+                'Bạn đã hết thời gian đặt cược.'
             ),
             color=discord.Color.from_rgb(0, 0, 0),
         )
@@ -1574,9 +1572,7 @@ async def baucua(interaction: discord.Interaction):
         title='🎲 Bầu cua • BirthdayTime',
         description=(
             'BirthdayTime nhà cái đến từ Châu Phi\n\n'
-            f'{BAUCUA_EMOJIS["nai"]} Nai    {BAUCUA_EMOJIS["bau"]} Bầu    {BAUCUA_EMOJIS["ga"]} Gà\n'
-            f'{BAUCUA_EMOJIS["ca"]} Cá    {BAUCUA_EMOJIS["cua"]} Cua    {BAUCUA_EMOJIS["tom"]} Tôm\n\n'
-            f'<a:clock:1548984730765099088> **Bạn còn {BAUCUA_ROUND_SECONDS} giây đặt cược.**\n\n'
+            'Đặt cược bằng cách chọn một con\n'
             'Các mem có 30 giây đặt cược, hãy cẩn trọng trước khi cược!'
         ),
         color=discord.Color.from_rgb(0, 0, 0),
@@ -1591,10 +1587,7 @@ async def baucua(interaction: discord.Interaction):
         baucua_round['remaining'] = remaining
         embed.description = (
             'BirthdayTime nhà cái đến từ Châu Phi\n\n'
-            f'{BAUCUA_EMOJIS["nai"]} Nai    {BAUCUA_EMOJIS["bau"]} Bầu    {BAUCUA_EMOJIS["ga"]} Gà\n'
-            f'{BAUCUA_EMOJIS["ca"]} Cá    {BAUCUA_EMOJIS["cua"]} Cua    {BAUCUA_EMOJIS["tom"]} Tôm\n\n'
-            f'<a:clock:1548984730765099088> **Bạn còn {remaining} giây đặt cược.**\n\n'
-            'Các mem có 30 giây đặt cược, hãy cẩn trọng trước khi cược!'
+            f'Bạn còn thời gian {remaining} đặt cược'
         )
         try:
             await game_message.edit(embed=embed, view=view)
