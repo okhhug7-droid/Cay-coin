@@ -371,6 +371,7 @@ async def on_ready():
         # Khôi phục các nút Ticket sau khi bot restart.
         bot.add_view(TicketPanelView())
         bot.add_view(TicketManageView())
+        bot.add_view(TicketUploadView())
 
 
     except Exception as e:
@@ -4163,10 +4164,10 @@ class TicketConfirmView(discord.ui.View):
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             interaction.user: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, read_message_history=True
+                view_channel=True, send_messages=True, read_message_history=True, attach_files=True
             ),
             guild.me: discord.PermissionOverwrite(
-                view_channel=True, send_messages=True, read_message_history=True,
+                view_channel=True, send_messages=True, read_message_history=True, attach_files=True,
                 manage_channels=True
             ),
         }
@@ -4174,7 +4175,7 @@ class TicketConfirmView(discord.ui.View):
         for role in guild.roles:
             if role.permissions.administrator:
                 overwrites[role] = discord.PermissionOverwrite(
-                    view_channel=True, send_messages=True, read_message_history=True
+                    view_channel=True, send_messages=True, read_message_history=True, attach_files=True
                 )
 
         try:
@@ -4201,11 +4202,19 @@ class TicketConfirmView(discord.ui.View):
             description=(
                 f"Xin chào {interaction.user.mention}!\n\n"
                 f"**Nội dung yêu cầu:**\n{self.content}\n\n"
-                "Nhân viên sẽ hỗ trợ bạn tại đây."
+                "Nhân viên sẽ hỗ trợ bạn tại đây.\n\n📎 Bạn có thể bấm **+ / Đính kèm** để chọn ảnh hoặc file từ máy tính và gửi trực tiếp vào ticket."
             ),
             color=discord.Color.green(),
         )
         await channel.send(content=interaction.user.mention, embed=embed, view=TicketManageView())
+        await channel.send(
+            embed=make_embed(
+                title="📎 GỬI ẢNH / FILE",
+                description="Bạn có thể **chọn ảnh/file trực tiếp từ máy tính** bằng nút đính kèm của Discord và gửi vào ticket này.",
+                color=discord.Color.from_rgb(0, 0, 0),
+            ),
+            view=TicketUploadView(),
+        )
         await interaction.followup.send(
             f"<a:verify:1548178353859596320> Đã tạo ticket: {channel.mention}", ephemeral=True
         )
@@ -4217,6 +4226,19 @@ class TicketConfirmView(discord.ui.View):
             content="❌ Đã hủy tạo ticket.", embed=None, view=None
         )
         self.stop()
+
+
+class TicketUploadView(discord.ui.View):
+    """Nút mở hướng dẫn để người dùng gửi ảnh/file trực tiếp trong ticket."""
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="📎 Gửi ảnh / file", style=discord.ButtonStyle.secondary, custom_id="ticket_upload_hint")
+    async def upload_hint(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "📎 Hãy bấm dấu **+ / đính kèm** cạnh ô chat, chọn ảnh từ máy rồi gửi trực tiếp vào ticket này.",
+            ephemeral=True,
+        )
 
 
 class TicketManageView(discord.ui.View):
@@ -4251,7 +4273,7 @@ class TicketManageView(discord.ui.View):
         )
 
         embed = make_embed(
-            title="🙋 TICKET ĐÃ ĐƯỢC CLAIM",
+            title="<a:verify:1548178353859596320> TICKET ĐÃ ĐƯỢC CLAIM",
             description=f"Ticket này đã được Admin {interaction.user.mention} tiếp nhận.",
             color=discord.Color.green(),
         )
@@ -4318,7 +4340,7 @@ async def setticket(interaction: discord.Interaction, channel: discord.TextChann
         title="Bla Bla = Tạo ticket",
         description=(
             "Tạo ticket để mua hàng nha các tình yêu!!\n\n"
-            "❗ Không tạo được thì nhắn cho <@1315601796424794173> nha"
+            "❗ Không tạo được thì nhắn cho <@999253748616548362> nha"
         ),
         color=discord.Color.from_rgb(135, 206, 235),
     )
