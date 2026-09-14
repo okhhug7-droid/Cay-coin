@@ -1526,7 +1526,7 @@ async def finish_baucua_round(channel, game_message=None, view=None):
     # 1) Đổi Embed đang cược thành trạng thái đã khóa.
     if game_message is not None:
         locked_embed = make_embed(
-            title='🎲 Bầu cua • BirthdayTime',
+            title='🦀 Bầu cua • BirthdayTime',
             description=(
                 'BirthdayTime nhà cái đến từ Châu Phi\n\n'
                 'Bạn đã hết thời gian đặt cược.'
@@ -1538,9 +1538,18 @@ async def finish_baucua_round(channel, game_message=None, view=None):
         except discord.HTTPException:
             pass
 
-    # 2) Gửi 3 emoji kết quả bằng chat riêng để emoji hiển thị lớn.
-    result_emojis = '     '.join(str(BAUCUA_EMOJIS[x]) for x in result)
-    await channel.send(result_emojis)
+    # 2) Hiển thị 3 emoji loading trên cùng một dòng, rồi thay từng vị trí sau mỗi giây.
+    loading_emoji = '<a:loading:1548997886098935848>'
+    result_line = [loading_emoji, loading_emoji, loading_emoji]
+    result_message = await channel.send('    '.join(result_line))
+
+    for index, key in enumerate(result):
+        await asyncio.sleep(1)
+        result_line[index] = str(BAUCUA_EMOJIS[key])
+        try:
+            await result_message.edit(content='    '.join(result_line))
+        except discord.HTTPException:
+            pass
 
     # 3) Gửi Embed kết quả riêng.
     result_lines = ['**Kết quả:**']
@@ -1569,7 +1578,7 @@ async def baucua(interaction: discord.Interaction):
     baucua_round = {'open': True, 'bets': [], 'remaining': BAUCUA_ROUND_SECONDS}
     view = BauCuaView()
     embed = make_embed(
-        title='🦀 Bầu cua • BirthdayTime',
+        title='🎲 Bầu cua • BirthdayTime',
         description=(
             'BirthdayTime nhà cái đến từ Châu Phi\n\n'
             'Đặt cược bằng cách chọn một con\n'
