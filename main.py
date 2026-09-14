@@ -201,7 +201,7 @@ server_boost_channels = {}
 server_stats_channels = {}     
 
 WELCOME_CONFIG = {
-    "channel_id": None,
+    "channel_id": 1540147987118956624,
     "message": (
         "Chào mừng {name} đã gia nhập **{server}**!\n\n"
         "**Chào con vk:** {member}\n"
@@ -214,7 +214,7 @@ WELCOME_CONFIG = {
 }
 
 BOOST_CONFIG = {
-    "channel_id": None,
+    "channel_id": 1547139956097425438,
     "message": "Cảm ơn {member} đã Boost máy chủ **{server}** để giúp server ngày càng phát triển hơn! 🚀💎",
     "gif_path": "boost_gif.gif"
 }
@@ -222,6 +222,7 @@ BOOST_CONFIG = {
 LEVEL_ROLE_MILESTONES = [1, 25, 50, 100, 200]
 
 LEVELUP_CONFIG = {
+     "channel_id": 154714309992073799702,
     "message": "Chúc mừng {member} đã đạt đến **Cấp độ {level} / 300**! 🌟{role_mention}",
     "gif_path": "levelup_gif.gif"
 }
@@ -4086,7 +4087,7 @@ db_cursor.execute("""
 db_conn.commit()
 
 
-class TicketCreateModal(discord.ui.Modal, title="🎫 Tạo Ticket"):
+class TicketCreateModal(discord.ui.Modal, title="<a:verify:1548178353859596320> Tạo đơn rút"):
     content = discord.ui.TextInput(
         label="Nội dung cần hỗ trợ",
         placeholder="Mô tả vấn đề của bạn...",
@@ -4273,7 +4274,7 @@ class TicketManageView(discord.ui.View):
         )
 
         embed = make_embed(
-            title="<a:verify:1548178353859596320> TICKET ĐÃ ĐƯỢC CLAIM",
+            title="🙋 TICKET ĐÃ ĐƯỢC CLAIM",
             description=f"Ticket này đã được Admin {interaction.user.mention} tiếp nhận.",
             color=discord.Color.green(),
         )
@@ -4312,7 +4313,7 @@ class TicketPanelView(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(
-        label="🎫 Tạo Ticket",
+        label="<a:verify:1548178353859596320> Tạo đơn rút",
         style=discord.ButtonStyle.primary,
         custom_id="ticket_create_button",
     )
@@ -4340,7 +4341,7 @@ async def setticket(interaction: discord.Interaction, channel: discord.TextChann
         title="Bla Bla = Tạo ticket",
         description=(
             "Tạo ticket để mua hàng nha các tình yêu!!\n\n"
-            "❗ Không tạo được thì nhắn cho <@999253748616548362> nha"
+            "❗ Không tạo được thì nhắn cho <@1315601796424794173> nha"
         ),
         color=discord.Color.from_rgb(135, 206, 235),
     )
