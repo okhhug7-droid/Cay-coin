@@ -324,6 +324,20 @@ FOOTER_AUTHOR = "by w.dec"
 SELF_ROLE_PING_ID = 1515041455805304953
 BIRTHDAY_GIF_PATH = "hb_gif.gif" 
 
+
+@bot.command(name="avatar")
+async def avatar(ctx, member: discord.Member = None):
+    """Hiển thị avatar của người dùng được mention hoặc chính người dùng."""
+    member = member or ctx.author
+    avatar_url = member.display_avatar.url
+    embed = make_embed(
+        title=f"🖼️ AVATAR CỦA {member.display_name}",
+        color=discord.Color.from_rgb(0, 0, 0)
+    )
+    embed.set_image(url=avatar_url)
+    embed.set_author(name=str(member), icon_url=avatar_url)
+    await ctx.send(embed=embed)
+
 @bot.event
 async def on_ready():
     print(f"🤖 Bot đã đăng nhập thành công với tên: {bot.user}")
@@ -2177,6 +2191,25 @@ async def masoi_phase_timer(room_id, phase, seconds):
                     color=discord.Color.from_rgb(0, 0, 0)
                 )
                 await channel.send(embed=embed)
+
+                # Embed thưởng coin RIÊNG cho game Ma Sói
+                if not room.get("coin_rewarded"):
+                    room["coin_rewarded"] = True
+                    guild = bot.get_guild(room.get("guild_id"))
+                    winner_mentions = []
+                    wolf_roles = {"Sói Thường", "Sói Alpha", "Sói Con", "Sói Sát Thủ"}
+                    for uid in room.get("players", []):
+                        role = room.get("roles", {}).get(uid)
+                        is_winner = ((winner == "Ma Sói" and role in wolf_roles) or
+                                     (winner == "Dân Làng" and role not in wolf_roles))
+                        if is_winner:
+                            baucua_change_coins(uid, GAME_WIN_REWARD)
+                            member = guild.get_member(uid) if guild else None
+                            winner_mentions.append(member.mention if member else f"<@{uid}>")
+                    winner_label = (f"<:werewolf:1547564934299390082> **Ma sói win**"
+                                    if winner == "Ma Sói" else
+                                    f"<:villagers:1547581626379403355> **Dân làng win**")
+                    await channel.send(embed=game_coin_reward_embed("MA SÓI", winner_mentions, GAME_WIN_REWARD, winner_label))
             return
 
         target_phase = "day" if phase == "night" else "night"
@@ -2551,6 +2584,7 @@ async def masoi_command(interaction: discord.Interaction):
             "dead": [],
             "game_finished": False,
             "winner": None,
+            "coin_rewarded": False,
         }
 
         room = MASOI_ROOMS[room_id]
@@ -3227,6 +3261,24 @@ async def murder_finish(room, winner, prefix=""):
             color=discord.Color.from_rgb(0, 0, 0)
         ))
 
+    # Embed thưởng coin RIÊNG cho game Murder
+    if winner in {"Dân", "Murder"} and not room.get("coin_rewarded"):
+        room["coin_rewarded"] = True
+        winner_mentions = []
+        for uid in room.get("players", []):
+            role = room.get("roles", {}).get(uid)
+            is_winner = ((winner == "Murder" and role == "Murder") or
+                         (winner == "Dân" and role != "Murder"))
+            if is_winner:
+                baucua_change_coins(uid, GAME_WIN_REWARD)
+                m = murder_member(room, uid)
+                winner_mentions.append(m.mention if m else f"<@{uid}>")
+        winner_label = ("<:emoji_75:1547988327104254012> **Murder win**"
+                        if winner == "Murder" else
+                        "<:villagers:1547581626379403355> **Người dân win**")
+        if channel:
+            await channel.send(embed=game_coin_reward_embed("MURDER", winner_mentions, GAME_WIN_REWARD, winner_label))
+
 
 @bot.tree.command(name="murder", description="Tạo phòng game Murder 5–15 người")
 async def murder_command(interaction: discord.Interaction):
@@ -3492,6 +3544,20 @@ def baucua_change_coins(user_id: int, amount: int):
     db_cursor.execute("UPDATE baucua_coins SET coins = ? WHERE user_id = ?", (new_value, user_id))
     db_conn.commit()
     return new_value
+
+
+# ==================== THƯỞNG COIN GAME ====================
+GAME_WIN_REWARD = 50000
+
+def game_coin_reward_embed(game_name, winners, reward, winner_label):
+    # Embed thưởng coin riêng cho từng game, đúng format thông báo game.
+    lines = [f"{mention} đã húp được **{reward:,}**<a:coin:1548707654459727964>" for mention in winners[:25]]
+    description = f"{winner_label}\n" + ("\n".join(lines) if lines else "Không có người nhận thưởng.")
+    return make_embed(
+        title=f"💰 {game_name} • THƯỞNG COIN",
+        description=description,
+        color=discord.Color.from_rgb(0, 0, 0)
+    )
 
 
 BAUCUA_ROUND_SECONDS = 60
