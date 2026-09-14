@@ -201,7 +201,7 @@ server_boost_channels = {}
 server_stats_channels = {}     
 
 WELCOME_CONFIG = {
-    "channel_id": 1540147987118956624,
+    "channel_id": None,
     "message": (
         "Chào mừng {name} đã gia nhập **{server}**!\n\n"
         "**Chào con vk:** {member}\n"
@@ -214,7 +214,7 @@ WELCOME_CONFIG = {
 }
 
 BOOST_CONFIG = {
-    "channel_id": 1547139956097425438,
+    "channel_id": None,
     "message": "Cảm ơn {member} đã Boost máy chủ **{server}** để giúp server ngày càng phát triển hơn! 🚀💎",
     "gif_path": "boost_gif.gif"
 }
@@ -222,7 +222,6 @@ BOOST_CONFIG = {
 LEVEL_ROLE_MILESTONES = [1, 25, 50, 100, 200]
 
 LEVELUP_CONFIG = {
-     "channel_id": 154714309992073799702,
     "message": "Chúc mừng {member} đã đạt đến **Cấp độ {level} / 300**! 🌟{role_mention}",
     "gif_path": "levelup_gif.gif"
 }
@@ -4101,7 +4100,7 @@ class TicketCreateModal(discord.ui.Modal, title="<a:verify:1548178353859596320> 
         text = self.content.value.strip()
         view = TicketConfirmView(interaction.user, text)
         embed = make_embed(
-            title="🎫 XÁC NHẬN TẠO TICKET",
+            title="<a:verify:1548178353859596320> XÁC NHẬN TẠO TICKET",
             description=(
                 f"**Người tạo:** {interaction.user.mention}\n\n"
                 f"**Nội dung:**\n{text}\n\n"
@@ -4199,7 +4198,7 @@ class TicketConfirmView(discord.ui.View):
             return
 
         embed = make_embed(
-            title="🎫 TICKET MỚI",
+            title="<a:verify:1548178353859596320> TICKET MỚI",
             description=(
                 f"Xin chào {interaction.user.mention}!\n\n"
                 f"**Nội dung yêu cầu:**\n{self.content}\n\n"
@@ -4274,7 +4273,7 @@ class TicketManageView(discord.ui.View):
         )
 
         embed = make_embed(
-            title="🙋 TICKET ĐÃ ĐƯỢC CLAIM",
+            title="<a:verify:1548178353859596320> TICKET ĐÃ ĐƯỢC CLAIM",
             description=f"Ticket này đã được Admin {interaction.user.mention} tiếp nhận.",
             color=discord.Color.green(),
         )
@@ -4313,7 +4312,7 @@ class TicketPanelView(discord.ui.View):
         super().__init__(timeout=None)
 
     @discord.ui.button(
-        label="<a:verify:1548178353859596320> Tạo đơn rút",
+        label="<a:verify:1548178353859596320> Tạo Ticket",
         style=discord.ButtonStyle.primary,
         custom_id="ticket_create_button",
     )
