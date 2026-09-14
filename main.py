@@ -1578,7 +1578,7 @@ async def baucua(interaction: discord.Interaction):
     baucua_round = {'open': True, 'bets': [], 'remaining': BAUCUA_ROUND_SECONDS}
     view = BauCuaView()
     embed = make_embed(
-        title='🎲 Bầu cua • BirthdayTime',
+        title='🦀 Bầu cua • BirthdayTime',
         description=(
             'BirthdayTime nhà cái đến từ Châu Phi\n\n'
             'Đặt cược bằng cách chọn một con\n'
@@ -1596,7 +1596,8 @@ async def baucua(interaction: discord.Interaction):
         baucua_round['remaining'] = remaining
         embed.description = (
             'BirthdayTime nhà cái đến từ Châu Phi\n\n'
-            f'Bạn còn thời gian {remaining} đặt cược'
+            'Đặt cược bằng cách chọn một con\n'
+            f'Các mem có {remaining} giây đặt cược, hãy cẩn trọng trước khi cược!'
         )
         try:
             await game_message.edit(embed=embed, view=view)
