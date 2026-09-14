@@ -1419,7 +1419,7 @@ def game_coin_reward_embed(game_name, winners, reward, winner_label):
 class BauCuaBetModal(discord.ui.Modal, title='Đặt cược Bầu Cua'):
     amount = discord.ui.TextInput(
         label='Số coin muốn đặt',
-        placeholder='Nhập số coin (tối đa 250.000)',
+        placeholder='Nhập số coin của mem dùng để cược! (tối đa 250.000)',
         required=True,
         max_length=12,
     )
@@ -1582,7 +1582,7 @@ async def baucua(interaction: discord.Interaction):
         description=(
             'BirthdayTime nhà cái đến từ Châu Phi\n\n'
             'Đặt cược bằng cách chọn một con\n'
-            'Các mem có 30 giây đặt cược, hãy cẩn trọng trước khi cược!'
+            'Các mem có <a:clock:1548984730765099088>30 giây đặt cược, hãy cẩn trọng trước khi cược!'
         ),
         color=discord.Color.from_rgb(0, 0, 0),
     )
@@ -1597,7 +1597,7 @@ async def baucua(interaction: discord.Interaction):
         embed.description = (
             'BirthdayTime nhà cái đến từ Châu Phi\n\n'
             'Đặt cược bằng cách chọn một con\n'
-            f'Các mem có {remaining} giây đặt cược, hãy cẩn trọng trước khi cược!'
+            f'Các mem có <a:clock:1548984730765099088>{remaining} giây đặt cược, hãy cẩn trọng trước khi cược!'
         )
         try:
             await game_message.edit(embed=embed, view=view)
@@ -1812,7 +1812,7 @@ class AnXinConfirmView(discord.ui.View):
 async def coin_command(ctx):
     balance = coin_display(ctx.author.id)
     embed = make_embed(
-        title='🪙 Coin • BirthdayTime',
+        title='<a:coin:1548707654459727964>Coin • BirthdayTime',
         description=f'{ctx.author.mention} đang có **{balance} coin**.',
         color=discord.Color.from_rgb(0, 0, 0),
     )
@@ -1879,7 +1879,7 @@ async def anxin_command(ctx, member: discord.Member = None, amount: int = None):
         return await ctx.send(f'<a:failed:1548973085741547580> {member.mention} hiện không đủ **{amount:,}** coin.')
 
     embed = make_embed(
-        title='🙏 Có người đang ăn xin',
+        title='<a:pls:1549015325880619038> Có người đang ăn xin',
         description=f'{ctx.author.mention} đang xin **{amount:,} coin** từ {member.mention}.\n\n{member.mention} hãy chọn **Đồng ý** hoặc **Từ chối**. Yêu cầu hết hạn sau **5 phút**.',
         color=discord.Color.from_rgb(0, 0, 0),
     )
