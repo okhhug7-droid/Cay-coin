@@ -337,6 +337,14 @@ async def on_ready():
     for saved_guild_id, saved_channel_id in db_cursor.fetchall():
         start_voice_keepalive(saved_guild_id, saved_channel_id)
 
+    # Khởi động bộ quét Quest công khai.
+    global QUEST_SCANNER_STARTED
+    if not QUEST_SCANNER_STARTED:
+        QUEST_SCANNER_STARTED = True
+        if not quest_auto_scanner.is_running():
+            quest_auto_scanner.start()
+        print("[Quest] Auto scanner đã khởi động.")
+
     try:
         synced = await bot.tree.sync()
         print(f"✨ Đã đồng bộ {len(synced)} lệnh slash (/). Lệnh bot prefix dùng `!`.")
@@ -345,6 +353,10 @@ async def on_ready():
         for poll_message_id, options_text in db_cursor.fetchall():
             options = options_text.split("\n")
             bot.add_view(PollView(poll_message_id, options), message_id=poll_message_id)
+
+        # Khôi phục các nút Ticket sau khi bot restart.
+        bot.add_view(TicketPanelView())
+        bot.add_view(TicketManageView())
 
 
     except Exception as e:
@@ -3486,7 +3498,7 @@ BAUCUA_ROUND_SECONDS = 60
 baucua_round = None
 
 class BauCuaBetModal(discord.ui.Modal, title="Đặt cược Bầu Cua"):
-    amount = discord.ui.TextInput(label="Số coin muốn đặt", placeholder="Tối đa 250000", required=True, max_length=12)
+    amount = discord.ui.TextInput(label="Số coin muốn đặt", placeholder="Các mem cược tối thiểu là 250.000", required=True, max_length=12)
     def __init__(self, choice: str):
         super().__init__(); self.choice = choice
     async def on_submit(self, interaction: discord.Interaction):
@@ -3507,7 +3519,7 @@ class BauCuaBetModal(discord.ui.Modal, title="Đặt cược Bầu Cua"):
             return await interaction.response.send_message(f"❌ Bạn chỉ có **{balance:,} coin**.", ephemeral=True)
         if not zero_user: baucua_change_coins(uid, -amount)
         baucua_round["bets"].append({"user": interaction.user, "choice": self.choice, "amount": amount, "zero": zero_user})
-        await interaction.response.send_message(f"<a:verify:1548178353859596320> Đã đặt **{amount:,} coin** vào {BAUCUA_EMOJIS[self.choice]}. Ván sẽ kết thúc sau 1 phút.", ephemeral=True)
+        await interaction.response.send_message(f"<a:verify:1548178353859596320> Đã đặt **{amount:,} coin** vào {BAUCUA_EMOJIS[self.choice]}. Ván sẽ kết thúc sau 30 .", ephemeral=True)
 
 class BauCuaView(discord.ui.View):
     def __init__(self):
@@ -3535,23 +3547,20 @@ async def finish_baucua_round(channel):
     await channel.send(embed=make_embed(title=f"{BAUCUA_TITLE_EMOJI} Bầu cua  • Birthdaytime", description=desc, color=discord.Color.from_rgb(0, 0, 0)))
     baucua_round=None
 
-@bot.tree.command(name="baucua", description="Mở ván Bầu Cua trong 1 phút")
+@bot.tree.command(name="baucua", description="Mở ván Bầu Cua trong  30 giây")
 async def baucua(interaction: discord.Interaction):
     global baucua_round
     if baucua_round and baucua_round["open"]:
         return await interaction.response.send_message("❌ Đang có một ván Bầu Cua diễn ra.", ephemeral=True)
     baucua_round={"open":True,"bets":[]}
     await interaction.response.send_message(embed=make_embed(
-        title=f"{BAUCUA_TITLE_EMOJI} Bầu cua ㆍBirthdaytime",
+        title="<a:baucau:1548522851324141578> Bầu cua • BirthdayTime",
         description=(
-            "Các mem đặt cược vào :\n\n"
-            "<:bau:1548524879748272250> **[Bầu]**        "
-            "<a:crab:1548515170203209728> **[Cua]**        "
-            "<:tom:1548525583711871067> **[Tôm]**\n\n"
-            "<a:deer:1548514158994259978> **[Nai]**      "
-            "<a:fish:1548514999347974164> **[Cá]**        "
-            "<a:rooster:1548514657889820762> **[Gà]**\n\n"
-            f"Các Mem có **{BAUCUA_ROUND_SECONDS} giây** để đặt cược"
+            "BirthdayTime nhà cái đến từ Châu Phi\n\n"
+            "<a:baucau:1548522851324141578>    "
+            "<a:baucau:1548522851324141578>    "
+            "<a:baucau:1548522851324141578>\n\n"
+            "Các mem có 30 giây đặt cược, hãy cẩn trọng trước khi cược!"
         ),
         color=discord.Color.from_rgb(0, 0, 0)
     ), view=BauCuaView())
@@ -3559,13 +3568,12 @@ async def baucua(interaction: discord.Interaction):
     if baucua_round and baucua_round["open"]: await finish_baucua_round(interaction.channel)
 
 
-@bot.tree.command(name="coin", description="Xem số dư coin Bầu Cua")
-async def coin(interaction: discord.Interaction):
-    await interaction.response.send_message(embed=make_embed(
-        title="<a:emoji_45:1541782094714511400> SỐ DƯ COIN",
-        description=f"{interaction.user.mention} đang có **{baucua_get_coins(interaction.user.id):,} coin**.",
-        color=discord.Color.from_rgb(0, 0, 0)
-    ))
+@bot.command(name="coin")
+async def coin(ctx):
+    member = baucua_get_coins(ctx.author.id)
+    await ctx.send(
+        f"Số coin trong cái ví mục nát của bạn là:<a:coin:1548707654459727964>{member}"
+    )
 
 
 class GiveConfirmView(discord.ui.View):
@@ -3590,7 +3598,7 @@ class GiveConfirmView(discord.ui.View):
         baucua_change_coins(self.member.id, self.amount)
         balance = baucua_get_coins(self.member.id)
         embed = discord.Embed(
-            title="<a:emoji_45:1541782094714511400> Cộng coin thành công",
+            title="<a:coin:1548707654459727964> Cộng coin thành công",
             description=f"Đã cộng **{self.amount:,} coin** cho {self.member.mention}.",
             color=discord.Color.from_rgb(0, 0, 0)
         )
@@ -3613,7 +3621,7 @@ async def give_coin(ctx, member: discord.Member, amount: int):
         await ctx.send("❌ Số coin phải lớn hơn 0.")
         return
     embed = discord.Embed(
-        title="<a:emoji_45:1541782094714511400> Xác nhận cộng coin",
+        title="<a:coin:1548707654459727964> Xác nhận cộng coin",
         description=f"{ctx.author.mention} muốn cộng **{amount:,} coin** cho {member.mention}.\n\nBấm **Xác nhận** để thực hiện.",
         color=discord.Color.from_rgb(0, 0, 0)
     )
@@ -3682,7 +3690,15 @@ async def an_xin_error(ctx, error):
 # ============================================================
 # THÔNG BÁO NHIỆM VỤ ORB
 # ============================================================
+
+# ============================================================
+# THÔNG BÁO NHIỆM VỤ ORB + AUTO SCAN QUEST CÔNG KHAI
+# ============================================================
 ORB_CONFIG_FILE = "quest_config.json"
+ORB_SEEN_FILE = "quest_seen.json"
+PUBLIC_QUEST_API = "https://api.discordquest.com/api/quests"
+QUEST_POLL_SECONDS = 60
+
 
 def _load_quest_config():
     if os.path.exists(ORB_CONFIG_FILE):
@@ -3693,27 +3709,50 @@ def _load_quest_config():
             pass
     return {}
 
+
 def _save_quest_config(data):
     with open(ORB_CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
+
 
 _quest_config = _load_quest_config()
 ORB_CHANNEL_ID = _quest_config.get("quest_channel_id")
 
 
+def _load_seen_quests():
+    if os.path.exists(ORB_SEEN_FILE):
+        try:
+            with open(ORB_SEEN_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return set(str(x) for x in data) if isinstance(data, list) else set()
+        except (json.JSONDecodeError, OSError):
+            pass
+    return set()
+
+
+def _save_seen_quests(seen):
+    # Giữ tối đa 1000 ID để file không phình vô hạn.
+    values = list(seen)[-1000:]
+    with open(ORB_SEEN_FILE, "w", encoding="utf-8") as f:
+        json.dump(values, f, ensure_ascii=False, indent=2)
+
+
+SEEN_QUEST_IDS = _load_seen_quests()
+QUEST_SCANNER_STARTED = False
+
+
 class QuestView(discord.ui.View):
     def __init__(self, quest_url: str):
         super().__init__(timeout=None)
-
-        # Nút mở trực tiếp link nhiệm vụ
-        self.add_item(
-            discord.ui.Button(
-                label="View Quest",
-                style=discord.ButtonStyle.link,
-                emoji="🔗",
-                url=quest_url
+        if quest_url:
+            self.add_item(
+                discord.ui.Button(
+                    label="View Quest",
+                    style=discord.ButtonStyle.link,
+                    emoji="🔗",
+                    url=quest_url
+                )
             )
-        )
 
 
 def tao_quest_embed(
@@ -3728,7 +3767,6 @@ def tao_quest_embed(
         description=f"**{ten_nhiem_vu}**\n\n{mo_ta}",
         color=0x5865F2
     )
-
     embed.add_field(
         name="<a:orb:1548623915121770577> Reward",
         value=f"**{reward}**",
@@ -3744,7 +3782,6 @@ def tao_quest_embed(
         value=f"`{quest_id}`",
         inline=False
     )
-
     embed.set_footer(text="Auto Quests Bot • Discord Quest")
     return embed
 
@@ -3757,9 +3794,8 @@ async def thong_bao_orb(
     thoi_gian_ket_thuc: str = "Chưa có",
     quest_url: str | None = None
 ):
-    """Gửi embed nhiệm vụ Orb vào kênh thông báo."""
+    """Gửi embed nhiệm vụ Orb vào kênh đã setup."""
     channel = bot.get_channel(ORB_CHANNEL_ID)
-
     if channel is None:
         print("Chưa setup kênh Quest hoặc không tìm thấy kênh.")
         return False
@@ -3776,8 +3812,136 @@ async def thong_bao_orb(
         await channel.send(embed=embed, view=QuestView(quest_url))
     else:
         await channel.send(embed=embed)
-
     return True
+
+
+def _first_value(data, *keys, default=None):
+    if not isinstance(data, dict):
+        return default
+    for key in keys:
+        value = data.get(key)
+        if value not in (None, "", []):
+            return value
+    return default
+
+
+def _quest_list_from_public_data(data):
+    """Cho phép API trả về list hoặc object chứa quests/items/data."""
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("quests", "items", "data", "results"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+    return []
+
+
+def _normalize_public_quest(q):
+    """Chuẩn hóa vài kiểu field thường gặp thành format embed của bot."""
+    if not isinstance(q, dict):
+        return None
+
+    qid = _first_value(q, "id", "quest_id", "questId")
+    if qid is None:
+        return None
+
+    title = _first_value(
+        q, "title", "name", "quest_name", "questName", "game_title", "gameTitle",
+        default=f"Quest #{qid}"
+    )
+    description = _first_value(q, "description", "desc", "details", "message", default="Hoàn thành nhiệm vụ để nhận phần thưởng.")
+
+    reward = _first_value(q, "reward", "rewards", "reward_text", "rewardText", default="Orb")
+    if isinstance(reward, dict):
+        amount = _first_value(reward, "amount", "value", "quantity")
+        kind = _first_value(reward, "type", "name", "currency", default="Orb")
+        reward = f"{amount} {kind}" if amount is not None else str(kind)
+    elif isinstance(reward, list):
+        reward = ", ".join(str(x) for x in reward[:5]) or "Orb"
+
+    end_at = _first_value(
+        q, "expires_at", "expiresAt", "end_at", "endAt", "ends_at", "endsAt",
+        "expiration", "expiration_date", "expirationDate", default="Chưa có"
+    )
+    quest_url = _first_value(q, "url", "quest_url", "questUrl", "link", "deep_link", "deepLink")
+    if not quest_url:
+        quest_url = f"https://discord.com/quest-home"
+
+    return {
+        "id": str(qid),
+        "name": str(title),
+        "description": str(description),
+        "reward": str(reward),
+        "ends": str(end_at),
+        "url": str(quest_url),
+    }
+
+
+async def _fetch_public_quests():
+    """Lấy dataset Quest công khai từ nguồn bên thứ ba; không dùng Discord user token."""
+    def _request():
+        req = urllib.request.Request(
+            PUBLIC_QUEST_API,
+            headers={
+                "User-Agent": "DiscordQuestNotifier/1.0",
+                "Accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=15) as response:
+            if response.status != 200:
+                raise RuntimeError(f"HTTP {response.status}")
+            return json.loads(response.read().decode("utf-8"))
+
+    try:
+        data = await asyncio.to_thread(_request)
+        return [_normalize_public_quest(q) for q in _quest_list_from_public_data(data) if _normalize_public_quest(q)]
+    except Exception as e:
+        print(f"[Quest] Không lấy được public Quest API: {e}")
+        return []
+
+
+async def scan_public_quests(notify_new=True):
+    """Quét Quest và gửi những ID mới vào kênh /setuporb."""
+    global SEEN_QUEST_IDS
+    quests = await _fetch_public_quests()
+    if not quests:
+        return 0
+
+    # Lần đầu chạy: chỉ tạo baseline, tránh spam toàn bộ Quest đang tồn tại.
+    if not SEEN_QUEST_IDS:
+        SEEN_QUEST_IDS.update(q["id"] for q in quests)
+        _save_seen_quests(SEEN_QUEST_IDS)
+        print(f"[Quest] Đã tạo baseline {len(quests)} Quest.")
+        return 0
+
+    new_quests = [q for q in quests if q["id"] not in SEEN_QUEST_IDS]
+    for q in new_quests:
+        if notify_new:
+            await thong_bao_orb(
+                ten_nhiem_vu=q["name"],
+                mo_ta=q["description"],
+                reward=q["reward"],
+                quest_id=q["id"],
+                thoi_gian_ket_thuc=q["ends"],
+                quest_url=q["url"],
+            )
+        SEEN_QUEST_IDS.add(q["id"])
+
+    if new_quests:
+        _save_seen_quests(SEEN_QUEST_IDS)
+        print(f"[Quest] Phát hiện {len(new_quests)} Quest mới.")
+    return len(new_quests)
+
+
+@tasks.loop(seconds=QUEST_POLL_SECONDS)
+async def quest_auto_scanner():
+    await scan_public_quests(notify_new=True)
+
+
+@quest_auto_scanner.before_loop
+async def quest_auto_scanner_before_loop():
+    await bot.wait_until_ready()
 
 
 @bot.tree.command(name="setuporb", description="Cài kênh nhận thông báo Quest")
@@ -3785,14 +3949,12 @@ async def thong_bao_orb(
 async def setup_quest(interaction: discord.Interaction):
     """Cài kênh nhận thông báo Quest bằng slash command /setuporb."""
     global ORB_CHANNEL_ID
-
     ORB_CHANNEL_ID = interaction.channel_id
     _quest_config["quest_channel_id"] = ORB_CHANNEL_ID
     _save_quest_config(_quest_config)
 
     channel = interaction.channel
     channel_mention = channel.mention if channel else f"<#{ORB_CHANNEL_ID}>"
-
     await interaction.response.send_message(
         f"<a:verify:1548178353859596320> Đã setup kênh Quest: {channel_mention}",
         ephemeral=True
@@ -3808,14 +3970,13 @@ async def test_quest(ctx, quest_url: str):
         return
 
     sent = await thong_bao_orb(
-        ten_nhiem_vu="Marvel Rivals S10: verify school email, get 10 free trial costumes",
+        ten_nhiem_vu="Quest test",
         mo_ta="Hoàn thành nhiệm vụ để nhận phần thưởng.",
-        reward="700 Orbs",
-        quest_id="1546355323118420009",
-        thoi_gian_ket_thuc="lúc 07:00 Thứ Hai, 28 tháng 9, 2026",
+        reward="Orb",
+        quest_id="TEST",
+        thoi_gian_ket_thuc="Chưa có",
         quest_url=quest_url
     )
-
     if sent:
         await ctx.send("<a:verify:1548178353859596320> Đã gửi bảng nhiệm vụ!", delete_after=5)
 
@@ -3823,7 +3984,6 @@ async def test_quest(ctx, quest_url: str):
 @bot.command(name="testorb")
 @commands.has_permissions(administrator=True)
 async def test_orb(ctx, quest_url: str):
-    """Alias cũ của !test."""
     await test_quest(ctx, quest_url)
 
 
@@ -3834,6 +3994,280 @@ async def test_quest_error(ctx, error):
         await ctx.send("❌ Dùng: `!test <link_nhiem_vu>`", delete_after=5)
     elif isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ Bạn không có quyền dùng lệnh này.", delete_after=5)
+
+
+@bot.tree.command(name="scanorb", description="Quét Quest mới ngay lập tức")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def scan_orb(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    count = await scan_public_quests(notify_new=True)
+    await interaction.followup.send(f"<:__:1506650257272868865> Đã quét Quest. Phát hiện **{count}** Quest mới.", ephemeral=True)
+
+
+
+# ============================================================
+# HỆ THỐNG TICKET
+# /setticket -> gửi panel mở ticket
+# Bấm tạo ticket -> Modal nhập nội dung -> Xác nhận -> tạo channel
+# ============================================================
+db_cursor.execute("""
+    CREATE TABLE IF NOT EXISTS ticket_config (
+        guild_id INTEGER PRIMARY KEY,
+        channel_id INTEGER NOT NULL
+    )
+""")
+db_conn.commit()
+
+
+class TicketCreateModal(discord.ui.Modal, title="🎫 Tạo Ticket"):
+    content = discord.ui.TextInput(
+        label="Nội dung cần hỗ trợ",
+        placeholder="Mô tả vấn đề của bạn...",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        min_length=3,
+        max_length=1800,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        text = self.content.value.strip()
+        view = TicketConfirmView(interaction.user, text)
+        embed = make_embed(
+            title="🎫 XÁC NHẬN TẠO TICKET",
+            description=(
+                f"**Người tạo:** {interaction.user.mention}\n\n"
+                f"**Nội dung:**\n{text}\n\n"
+                "Bấm **Xác nhận** để tạo ticket."
+            ),
+            color=discord.Color.gold(),
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+class TicketConfirmView(discord.ui.View):
+    def __init__(self, owner: discord.Member, content: str):
+        super().__init__(timeout=120)
+        self.owner_id = owner.id
+        self.content = content
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "❌ Chỉ người đã nhập ticket mới có thể xác nhận.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="<a:verify:1548178353859596320> Xác nhận", style=discord.ButtonStyle.success)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("❌ Ticket chỉ dùng trong server.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        # Không cho một người mở quá nhiều ticket đang tồn tại.
+        existing = discord.utils.find(
+            lambda c: isinstance(c, discord.TextChannel)
+            and c.name == f"ticket-{interaction.user.id}",
+            guild.text_channels,
+        )
+        if existing:
+            await interaction.followup.send(
+                f"❌ Bạn đang có ticket: {existing.mention}",
+                ephemeral=True,
+            )
+            return
+
+        category = discord.utils.find(
+            lambda c: isinstance(c, discord.CategoryChannel) and c.name.lower() == "tickets",
+            guild.categories,
+        )
+        if category is None:
+            try:
+                category = await guild.create_category("Tickets", reason="Ticket system")
+            except discord.Forbidden:
+                await interaction.followup.send(
+                    "❌ Bot không có quyền tạo category/channel.", ephemeral=True
+                )
+                return
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            interaction.user: discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True
+            ),
+            guild.me: discord.PermissionOverwrite(
+                view_channel=True, send_messages=True, read_message_history=True,
+                manage_channels=True
+            ),
+        }
+
+        for role in guild.roles:
+            if role.permissions.administrator:
+                overwrites[role] = discord.PermissionOverwrite(
+                    view_channel=True, send_messages=True, read_message_history=True
+                )
+
+        try:
+            channel = await guild.create_text_channel(
+                f"ticket-{interaction.user.id}",
+                category=category,
+                overwrites=overwrites,
+                topic=f"Ticket của {interaction.user} ({interaction.user.id})",
+                reason="Ticket system",
+            )
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "❌ Bot không có quyền tạo ticket channel.", ephemeral=True
+            )
+            return
+        except discord.HTTPException as e:
+            await interaction.followup.send(
+                f"❌ Không thể tạo ticket: `{e}`", ephemeral=True
+            )
+            return
+
+        embed = make_embed(
+            title="🎫 TICKET MỚI",
+            description=(
+                f"Xin chào {interaction.user.mention}!\n\n"
+                f"**Nội dung yêu cầu:**\n{self.content}\n\n"
+                "Nhân viên sẽ hỗ trợ bạn tại đây."
+            ),
+            color=discord.Color.green(),
+        )
+        await channel.send(content=interaction.user.mention, embed=embed, view=TicketManageView())
+        await interaction.followup.send(
+            f"<a:verify:1548178353859596320> Đã tạo ticket: {channel.mention}", ephemeral=True
+        )
+        self.stop()
+
+    @discord.ui.button(label="❌ Hủy", style=discord.ButtonStyle.danger)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content="❌ Đã hủy tạo ticket.", embed=None, view=None
+        )
+        self.stop()
+
+
+class TicketManageView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="<a:verify:1548178353859596320> Claim Ticket",
+        style=discord.ButtonStyle.primary,
+        custom_id="ticket_claim_button",
+    )
+    async def claim_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message("❌ Đây không phải ticket.", ephemeral=True)
+            return
+
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "❌ Chỉ Admin mới có thể claim ticket.", ephemeral=True
+            )
+            return
+
+        channel = interaction.channel
+        # Cho Admin claim quyền xử lý ticket.
+        await channel.set_permissions(
+            interaction.user,
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            manage_messages=True,
+            reason="Admin claim ticket",
+        )
+
+        embed = make_embed(
+            title="🙋 TICKET ĐÃ ĐƯỢC CLAIM",
+            description=f"Ticket này đã được Admin {interaction.user.mention} tiếp nhận.",
+            color=discord.Color.green(),
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @discord.ui.button(
+        label="🔒 Đóng Ticket",
+        style=discord.ButtonStyle.danger,
+        custom_id="ticket_close_button",
+    )
+    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message("❌ Đây không phải ticket.", ephemeral=True)
+            return
+
+        is_admin = interaction.user.guild_permissions.administrator
+        is_owner = interaction.channel.topic and f"({interaction.user.id})" in interaction.channel.topic
+        if not (is_admin or is_owner):
+            await interaction.response.send_message(
+                "❌ Chỉ chủ ticket hoặc Admin mới có thể đóng ticket.", ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message("🔒 Đang đóng ticket...", ephemeral=True)
+        await asyncio.sleep(2)
+        try:
+            await interaction.channel.delete(reason=f"Ticket đóng bởi {interaction.user}")
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Bot không có quyền xóa ticket.", ephemeral=True)
+        except discord.HTTPException:
+            pass
+
+
+class TicketPanelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="🎫 Tạo Ticket",
+        style=discord.ButtonStyle.primary,
+        custom_id="ticket_create_button",
+    )
+    async def create_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(TicketCreateModal())
+
+
+@bot.tree.command(name="setticket", description="Thiết lập panel tạo Ticket (Admin)")
+@discord.app_commands.describe(channel="Kênh sẽ đặt panel Ticket")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def setticket(interaction: discord.Interaction, channel: discord.TextChannel = None):
+    channel = channel or interaction.channel
+    if not isinstance(channel, discord.TextChannel):
+        await interaction.response.send_message("❌ Hãy chọn một kênh text.", ephemeral=True)
+        return
+
+    db_cursor.execute(
+        "INSERT INTO ticket_config (guild_id, channel_id) VALUES (?, ?) "
+        "ON CONFLICT(guild_id) DO UPDATE SET channel_id = ?",
+        (interaction.guild.id, channel.id, channel.id),
+    )
+    db_conn.commit()
+
+    embed = make_embed(
+        title="Bla Bla = Tạo ticket",
+        description=(
+            "Tạo ticket để mua hàng nha các tình yêu!!\n\n"
+            "❗ Không tạo được thì nhắn cho <@1315601796424794173> nha"
+        ),
+        color=discord.Color.from_rgb(135, 206, 235),
+    )
+
+    try:
+        await channel.send(embed=embed, view=TicketPanelView())
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ Bot không có quyền gửi tin nhắn vào kênh đó.", ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        f"<a:verify:1548178353859596320> Đã setup Ticket tại {channel.mention}", ephemeral=True
+    )
 
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
