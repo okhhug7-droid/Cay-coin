@@ -1552,7 +1552,7 @@ async def finish_baucua_round(channel, game_message=None, view=None):
         result_lines.append('Không có người đặt cược.')
 
     result_embed = make_embed(
-        title='🎲 Bầu cua • BirthdayTime',
+        title='🦀 Bầu cua • BirthdayTime',
         description='\n'.join(result_lines),
         color=discord.Color.from_rgb(0, 0, 0),
     )
@@ -1569,7 +1569,7 @@ async def baucua(interaction: discord.Interaction):
     baucua_round = {'open': True, 'bets': [], 'remaining': BAUCUA_ROUND_SECONDS}
     view = BauCuaView()
     embed = make_embed(
-        title='🎲 Bầu cua • BirthdayTime',
+        title='🦀 Bầu cua • BirthdayTime',
         description=(
             'BirthdayTime nhà cái đến từ Châu Phi\n\n'
             'Đặt cược bằng cách chọn một con\n'
