@@ -1,79 +1,425 @@
 import discord
-
 from discord.ext import commands, tasks
-
 import os
-
 import datetime
-
 import sqlite3
-
 import math
-
 import asyncio
-
 import functools
-
 import json
-
 import urllib.parse
-
 import urllib.request
-
 import random
-
+import time
+import hashlib
+import base64
+import aiohttp
+from discord.ui import View, Button, Modal, TextInput
 
 import yt_dlp
 
 intents = discord.Intents.default()
-
 intents.message_content = True
-
 intents.members = True
-
 intents.presences = True
-
 if hasattr(intents, 'polls'):
     intents.polls = True
-
 intents.guilds = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-db_conn = sqlite3.connect('database.db')
+# ============================================================
+# CẤU HÌNH BOOST FAKE
+# ============================================================
+BOOST_TOKENS = [
+    "TOKEN_USER_1",
+    "TOKEN_USER_2",
+    "TOKEN_USER_3"
+]
 
+BOOST_ROLE_ID = 123456789012345678
+
+# Chỉ ID người dùng này mới được phép fake boost
+ALLOWED_BOOST_USER_ID = 1548490039158251531
+
+# ============================================================
+# MODULE CHỐNG PHÁT HIỆN KHI BOOST
+# ============================================================
+ANTI_DETECT_CONFIG = {
+    "min_delay": 8,
+    "max_delay": 25,
+    "jitter": True,
+    "rotate_ua": True,
+    "rotate_fingerprint": True,
+    "max_per_hour": 8,
+    "cooldown_after_batch": 120,
+    "batch_size": 3,
+    "max_retry": 2,
+    "retry_delay": 30,
+}
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+]
+
+ACCEPT_LANGUAGES = [
+    "en-US,en;q=0.9",
+    "en-GB,en;q=0.9",
+    "vi-VN,vi;q=0.9,en;q=0.8",
+    "en-CA,en;q=0.9,fr;q=0.8",
+    "en-AU,en;q=0.9",
+]
+
+ACCEPT_ENCODINGS = [
+    "gzip, deflate, br",
+    "gzip, deflate",
+    "gzip, deflate, br, zstd",
+]
+
+_request_timestamps = []
+
+def _random_delay():
+    if ANTI_DETECT_CONFIG["jitter"]:
+        return random.uniform(
+            ANTI_DETECT_CONFIG["min_delay"],
+            ANTI_DETECT_CONFIG["max_delay"]
+        )
+    return ANTI_DETECT_CONFIG["min_delay"]
+
+def _get_random_headers(user_token):
+    headers = {
+        "Authorization": user_token,
+        "Content-Type": "application/json",
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept": "*/*",
+        "Accept-Language": random.choice(ACCEPT_LANGUAGES),
+        "Accept-Encoding": random.choice(ACCEPT_ENCODINGS),
+        "Origin": "https://discord.com",
+        "Referer": "https://discord.com/channels/@me",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "X-Discord-Locale": random.choice(["en-US", "vi", "en-GB"]),
+        "X-Discord-Timezone": random.choice([
+            "Asia/Ho_Chi_Minh",
+            "America/New_York",
+            "Europe/London",
+            "Asia/Tokyo",
+        ]),
+        "X-Super-Properties": "",
+    }
+
+    super_props = {
+        "os": random.choice(["Windows", "Mac OS X", "Linux"]),
+        "browser": random.choice(["Chrome", "Firefox", "Safari"]),
+        "device": "",
+        "system_locale": random.choice(["en-US", "vi"]),
+        "browser_user_agent": headers["User-Agent"],
+        "browser_version": "120.0.0.0",
+        "os_version": "10",
+        "referrer": "",
+        "referring_domain": "",
+        "referrer_current": "",
+        "referring_domain_current": "",
+        "release_channel": "stable",
+        "client_build_number": random.randint(250000, 260000),
+        "client_event_source": None,
+    }
+    headers["X-Super-Properties"] = base64.b64encode(
+        json.dumps(super_props).encode()
+    ).decode()
+
+    if ANTI_DETECT_CONFIG["rotate_fingerprint"]:
+        fingerprint = hashlib.md5(
+            f"{user_token}{time.time()}{random.random()}".encode()
+        ).hexdigest()
+        headers["X-Fingerprint"] = fingerprint
+
+    return headers
+
+def _check_rate_limit():
+    global _request_timestamps
+    now = time.time()
+    _request_timestamps = [t for t in _request_timestamps if now - t < 3600]
+    if len(_request_timestamps) >= ANTI_DETECT_CONFIG["max_per_hour"]:
+        wait_time = 3600 - (now - _request_timestamps[0]) + 5
+        return False, wait_time
+    return True, 0
+
+def _record_request():
+    global _request_timestamps
+    _request_timestamps.append(time.time())
+
+async def send_boost_safe(user_token, guild_id, retry=0):
+    allowed, wait_time = _check_rate_limit()
+    if not allowed:
+        print(f"[ANTI-DETECT] Đạt giới hạn request/giờ. Chờ {wait_time:.0f}s...")
+        await asyncio.sleep(wait_time)
+
+    delay = _random_delay()
+    print(f"[ANTI-DETECT] Delay {delay:.1f}s trước khi gửi...")
+    await asyncio.sleep(delay)
+
+    url = f"https://discord.com/api/v9/guilds/{guild_id}/premium/subscriptions"
+    headers = _get_random_headers(user_token)
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.put(url, headers=headers) as resp:
+                status = resp.status
+                _record_request()
+
+                if status == 429:
+                    retry_after = int(resp.headers.get("Retry-After", 60))
+                    print(f"[ANTI-DETECT] Bị rate limit. Chờ {retry_after}s...")
+                    await asyncio.sleep(retry_after + random.uniform(5, 15))
+                    if retry < ANTI_DETECT_CONFIG["max_retry"]:
+                        return await send_boost_safe(user_token, guild_id, retry + 1)
+                    return status
+
+                if status in (401, 403):
+                    print(f"[ANTI-DETECT] Token bị từ chối ({status}). Dừng token này.")
+                    return status
+
+                if status == 400:
+                    print(f"[ANTI-DETECT] Request không hợp lệ (400).")
+                    return status
+
+                if status in (200, 201):
+                    print(f"[ANTI-DETECT] Boost thành công.")
+
+                return status
+
+    except aiohttp.ClientError as e:
+        print(f"[ANTI-DETECT] Lỗi kết nối: {e}")
+        if retry < ANTI_DETECT_CONFIG["max_retry"]:
+            await asyncio.sleep(ANTI_DETECT_CONFIG["retry_delay"])
+            return await send_boost_safe(user_token, guild_id, retry + 1)
+        return -1
+    except Exception as e:
+        print(f"[ANTI-DETECT] Lỗi không xác định: {e}")
+        return -1
+
+async def send_boost_batched(user_token, guild_id, count):
+    batch_size = ANTI_DETECT_CONFIG["batch_size"]
+    cooldown = ANTI_DETECT_CONFIG["cooldown_after_batch"]
+    results = []
+
+    for i in range(count):
+        status = await send_boost_safe(user_token, guild_id)
+        results.append(status)
+
+        if (i + 1) % batch_size == 0 and (i + 1) < count:
+            print(f"[ANTI-DETECT] Nghỉ {cooldown}s sau batch {(i+1)//batch_size}...")
+            await asyncio.sleep(cooldown + random.uniform(10, 30))
+
+    return results
+
+# ============================================================
+# MODAL BOOST
+# ============================================================
+class BoostModal(Modal, title="Nhập thông tin boost"):
+    guild_id = TextInput(
+        label="ID Server",
+        placeholder="Nhập ID server cần boost",
+        required=True
+    )
+    boost_count = TextInput(
+        label="Số boost",
+        placeholder="Nhập số boost cần boost",
+        required=True
+    )
+    boost_days = TextInput(
+        label="Số ngày boost có hiệu lực",
+        placeholder="Ví dụ: 7, 14, 30",
+        required=True,
+        max_length=3
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.user.id != ALLOWED_BOOST_USER_ID:
+            await interaction.response.send_message(
+                "<a:failed:1548973085741547580> Bạn không có quyền sử dụng chức năng này.",
+                ephemeral=True
+            )
+            return
+
+        try:
+            gid = int(self.guild_id.value)
+            count = int(self.boost_count.value)
+            days = int(self.boost_days.value)
+        except ValueError:
+            await interaction.response.send_message(
+                "Dữ liệu không hợp lệ. ID server, số boost và số ngày phải là số nguyên.",
+                ephemeral=True
+            )
+            return
+
+        if count <= 0:
+            await interaction.response.send_message("Số boost phải lớn hơn 0.", ephemeral=True)
+            return
+
+        if days <= 0 or days > 365:
+            await interaction.response.send_message("Số ngày boost phải từ 1 đến 365.", ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            f"Bắt đầu boost **{count}** lần cho server `{gid}` trong **{days} ngày**...\n"
+            f"Đang chạy chế độ chống phát hiện (delay ngẫu nhiên).",
+            ephemeral=True
+        )
+
+        expire_at = datetime.datetime.now(VN_TZ) + datetime.timedelta(days=days)
+
+        per_token = max(1, count // len(BOOST_TOKENS))
+        total_sent = 0
+        total_success = 0
+
+        for token in BOOST_TOKENS:
+            results = await send_boost_batched(token, gid, per_token)
+            total_sent += len(results)
+            total_success += sum(1 for r in results if r in (200, 201))
+
+        embed = discord.Embed(
+            title="<a:verify:1548178353859596320> Boost hoàn tất",
+            description=(
+                f"**Server:** `{gid}`\n"
+                f"**Số boost gửi:** `{total_sent}`\n"
+                f"**Thành công:** `{total_success}`\n"
+                f"**Thời hạn:** `{days}` ngày\n"
+                f"**Hết hạn lúc:** `{expire_at.strftime('%H:%M:%S %d/%m/%Y')}`"
+            ),
+            color=0x2b2d31
+        )
+        add_standard_footer(embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+# ============================================================
+# VIEW BOOST
+# ============================================================
+class BoostView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Boost",
+        style=discord.ButtonStyle.primary,
+        emoji="<a:emoji_92:1548635996491616287>",
+        custom_id="boost_button"
+    )
+    async def boost_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != ALLOWED_BOOST_USER_ID:
+            await interaction.response.send_message(
+                "<a:failed:1548973085741547580> Bạn không có quyền sử dụng chức năng này.",
+                ephemeral=True
+            )
+            return
+        await interaction.response.send_modal(BoostModal())
+
+# ============================================================
+# LỆNH SETUP BOOST
+# ============================================================
+@bot.command(name='setupboost')
+async def setupboost(ctx):
+    if ctx.author.id != ALLOWED_BOOST_USER_ID:
+        await ctx.send("<a:failed:1548973085741547580> Bạn không có quyền sử dụng lệnh này.")
+        return
+
+    embed = discord.Embed(
+        title="<a:emoji_92:1548635996491616287>BirthdayTime • Boost",
+        description="Nhấn nút boost để nhập ID server và nhập số boost cần boost",
+        color=0x2b2d31
+    )
+    await ctx.send(embed=embed, view=BoostView())
+
+# ============================================================
+# DATABASE
+# ============================================================
+db_conn = sqlite3.connect('database.db')
 db_cursor = db_conn.cursor()
 
-db_cursor.execute('\n    CREATE TABLE IF NOT EXISTS levels (\n        user_id INTEGER,\n        guild_id INTEGER,\n        xp INTEGER,\n        level INTEGER,\n        PRIMARY KEY (user_id, guild_id)\n    )\n')
-
-db_cursor.execute('\n    CREATE TABLE IF NOT EXISTS level_roles (\n        guild_id INTEGER,\n        level INTEGER,\n        role_id INTEGER,\n        PRIMARY KEY (guild_id, level)\n    )\n')
-
-db_cursor.execute('\n    CREATE TABLE IF NOT EXISTS server_level_channels (\n        guild_id INTEGER PRIMARY KEY,\n        channel_id INTEGER\n    )\n')
-
-db_cursor.execute('\n    CREATE TABLE IF NOT EXISTS server_boost_roles (\n        guild_id INTEGER PRIMARY KEY,\n        role_id INTEGER\n    )\n')
-
-db_cursor.execute('\n    CREATE TABLE IF NOT EXISTS polls (\n        message_id INTEGER PRIMARY KEY,\n        guild_id INTEGER,\n        channel_id INTEGER,\n        question TEXT,\n        options TEXT,\n        created_by INTEGER\n    )\n')
-
-db_cursor.execute('\n    CREATE TABLE IF NOT EXISTS announcement_channels (\n        guild_id INTEGER PRIMARY KEY,\n        channel_id INTEGER\n    )\n')
-
+db_cursor.execute('''
+    CREATE TABLE IF NOT EXISTS levels (
+        user_id INTEGER,
+        guild_id INTEGER,
+        xp INTEGER,
+        level INTEGER,
+        PRIMARY KEY (user_id, guild_id)
+    )
+''')
+db_cursor.execute('''
+    CREATE TABLE IF NOT EXISTS level_roles (
+        guild_id INTEGER,
+        level INTEGER,
+        role_id INTEGER,
+        PRIMARY KEY (guild_id, level)
+    )
+''')
+db_cursor.execute('''
+    CREATE TABLE IF NOT EXISTS server_level_channels (
+        guild_id INTEGER PRIMARY KEY,
+        channel_id INTEGER
+    )
+''')
+db_cursor.execute('''
+    CREATE TABLE IF NOT EXISTS server_boost_roles (
+        guild_id INTEGER PRIMARY KEY,
+        role_id INTEGER
+    )
+''')
+db_cursor.execute('''
+    CREATE TABLE IF NOT EXISTS polls (
+        message_id INTEGER PRIMARY KEY,
+        guild_id INTEGER,
+        channel_id INTEGER,
+        question TEXT,
+        options TEXT,
+        created_by INTEGER
+    )
+''')
+db_cursor.execute('''
+    CREATE TABLE IF NOT EXISTS announcement_channels (
+        guild_id INTEGER PRIMARY KEY,
+        channel_id INTEGER
+    )
+''')
 db_conn.commit()
-
-db_cursor.execute('\n    CREATE TABLE IF NOT EXISTS voice_channels (\n        guild_id INTEGER PRIMARY KEY,\n        channel_id INTEGER NOT NULL\n    )\n')
-
+db_cursor.execute('''
+    CREATE TABLE IF NOT EXISTS voice_channels (
+        guild_id INTEGER PRIMARY KEY,
+        channel_id INTEGER NOT NULL
+    )
+''')
 db_conn.commit()
-
-db_cursor.execute('\n    CREATE TABLE IF NOT EXISTS self_role_config (\n        guild_id INTEGER PRIMARY KEY,\n        role_ids TEXT NOT NULL,\n        message TEXT NOT NULL\n    )\n')
-
+db_cursor.execute('''
+    CREATE TABLE IF NOT EXISTS self_role_config (
+        guild_id INTEGER PRIMARY KEY,
+        role_ids TEXT NOT NULL,
+        message TEXT NOT NULL
+    )
+''')
 db_conn.commit()
-
-db_cursor.execute('\n    CREATE TABLE IF NOT EXISTS welcome_config (\n        guild_id INTEGER PRIMARY KEY,\n        channel_id INTEGER,\n        message TEXT NOT NULL,\n        gif_path TEXT\n    )\n')
-
+db_cursor.execute('''
+    CREATE TABLE IF NOT EXISTS welcome_config (
+        guild_id INTEGER PRIMARY KEY,
+        channel_id INTEGER,
+        message TEXT NOT NULL,
+        gif_path TEXT
+    )
+''')
 db_conn.commit()
 
 voice_keepalive_tasks = {}
 
 async def keep_voice_connected(guild_id: int, channel_id: int):
-    """Giữ bot trong voice channel và tự kết nối lại khi bị ngắt."""
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
@@ -111,13 +457,9 @@ def stop_voice_keepalive(guild_id: int):
         task.cancel()
 
 afk_users = {}
-
 user_birthdays = {}
-
 server_congrats_channels = {}
-
 server_boost_channels = {}
-
 server_stats_channels = {}
 
 WELCOME_CONFIG = {'channel_id': None, 'message': 'Chào mừng {name} đã gia nhập **{server}**!\n\n**Chào con vk:** {member}\n**Con vk là thành viên:** `{number}`\nNhững người hỗ trợ:<@1315601796424794173>,<@1073202800965713961>,<@1502755916334760169> & <@1466395005487812620>\nDev Web: <@999253748616548362>\nDev Bot: <@1548490039158251531>', 'gif_path': 'welcome_gif.gif'}
@@ -129,13 +471,10 @@ LEVEL_ROLE_MILESTONES = [1, 25, 50, 100, 200]
 LEVELUP_CONFIG = {'message': 'Chúc mừng {member} đã đạt đến **Cấp độ {level} / 300**! 🌟{role_mention}', 'gif_path': 'levelup_gif.gif'}
 
 SPECIAL_ADMIN_ID = 1548490039158251531
-
 ALLOWED_GUILD_ID = 1503922700408586240
-
 UNAUTHORIZED_GUILD_MESSAGE = '<a:emoji_44:1541290870966325318> Đây là đâu ?, BirthdayTime mới là nhà của t'
 
 async def leave_unauthorized_guild(guild: discord.Guild):
-    """Báo trong server không được phép rồi tự rời server."""
     if guild.id == ALLOWED_GUILD_ID:
         return
     try:
@@ -211,7 +550,6 @@ class BirthdayModal(discord.ui.Modal, title='<a:happybirthday:154859306615846504
         await interaction.response.send_message('<a:verify:1548178353859596320> Đã lưu ngày sinh thành công!', ephemeral=True)
 
 class BirthdayView(discord.ui.View):
-
     def __init__(self):
         super().__init__(timeout=None)
 
@@ -223,7 +561,11 @@ class BirthdayView(discord.ui.View):
 @discord.app_commands.describe(channel='Kênh sẽ nhận thông báo')
 @discord.app_commands.checks.has_permissions(administrator=True)
 async def setannouncement(interaction: discord.Interaction, channel: discord.TextChannel):
-    db_cursor.execute('\n        INSERT INTO announcement_channels (guild_id, channel_id)\n        VALUES (?, ?)\n        ON CONFLICT(guild_id) DO UPDATE SET channel_id = ?\n    ', (interaction.guild.id, channel.id, channel.id))
+    db_cursor.execute('''
+        INSERT INTO announcement_channels (guild_id, channel_id)
+        VALUES (?, ?)
+        ON CONFLICT(guild_id) DO UPDATE SET channel_id = ?
+    ''', (interaction.guild.id, channel.id, channel.id))
     db_conn.commit()
     await interaction.response.send_message(f'<a:verify:1548178353859596320> Đã đặt {channel.mention} làm kênh thông báo!', ephemeral=True)
 
@@ -341,7 +683,6 @@ MASOI_ROLE_EMOJI = {'Dân Làng': '<:villagers:1547581626379403355>', 'Tiên Tri
 MASOI_ROOMS = {}
 
 def masoi_alive_winner(room):
-    """Trả về phe thắng nếu đã đủ điều kiện; None nếu ván chưa kết thúc."""
     roles = room.get('roles', {})
     dead = set(room.get('dead', []))
     alive = [uid for uid in room.get('players', []) if uid not in dead]
@@ -437,11 +778,9 @@ def masoi_phase_embed(phase, seconds_left=None):
     return embed
 
 WEREWOLF_BITE_EMOJI = '<a:werewolf_rnj29zcw:1547492968691269662>'
-
 WEREWOLF_ROLE_EMOJI = '<a:werewolf562516:1547493117786329098>'
 
 async def masoi_remove_player_from_room(room, victim_id):
-    """Ẩn người bị Ma Sói cắn khỏi kênh phòng, nhưng vẫn giữ họ trong dữ liệu ván."""
     guild = bot.get_guild(room.get('guild_id'))
     channel = guild.get_channel(room.get('channel_id')) if guild else None
     member = guild.get_member(victim_id) if guild else None
@@ -454,7 +793,6 @@ async def masoi_remove_player_from_room(room, victim_id):
         return (False, 'Bot thiếu quyền Manage Channels để cho người bị cắn rời phòng.')
 
 async def masoi_resolve_night(room):
-    """Xử lý mục tiêu bị Sói cắn khi đêm kết thúc."""
     if not room.get('started'):
         return None
     dead = set(room.setdefault('dead', []))
@@ -489,7 +827,6 @@ async def masoi_resolve_night(room):
     return {'victim_id': victim_id, 'victim_name': victim_name, 'ok': ok, 'err': err, 'votes': votes.get(victim_id, 0)}
 
 def masoi_status_embed(room):
-    """Bảng trạng thái sống/chết được gửi mỗi khi trời sáng."""
     guild = bot.get_guild(room.get('guild_id'))
     dead = set(room.get('dead', []))
     players = room.get('players', [])
@@ -510,7 +847,6 @@ def masoi_status_embed(room):
     return embed
 
 async def masoi_phase_timer(room_id, phase, seconds):
-    """Tự động chuyển Ngày/Đêm: đêm 2 phút, ngày 3 phút."""
     try:
         await asyncio.sleep(seconds)
         room = MASOI_ROOMS.get(room_id)
@@ -579,8 +915,6 @@ async def masoi_phase_timer(room_id, phase, seconds):
         return
 
 class MasoiRoleView(discord.ui.View):
-    """Bảng điều khiển sau khi chia bài."""
-
     def __init__(self, room_id):
         super().__init__(timeout=None)
         self.room_id = room_id
@@ -589,7 +923,6 @@ class MasoiRoleView(discord.ui.View):
         self.add_item(MasoiNightButton(room_id))
 
 class MasoiDayButton(discord.ui.Button):
-
     def __init__(self, room_id):
         super().__init__(label='☀️ NGÀY • 3 PHÚT', style=discord.ButtonStyle.success, custom_id=f'masoi_day_{room_id}')
         self.room_id = room_id
@@ -611,7 +944,6 @@ class MasoiDayButton(discord.ui.Button):
         await interaction.response.send_message('☀️ **Trời sáng! Chat đã được mở.** Thời gian ban ngày: **3 phút**.', ephemeral=False)
 
 class MasoiNightButton(discord.ui.Button):
-
     def __init__(self, room_id):
         super().__init__(label='🌙 ĐÊM • 2 PHÚT', style=discord.ButtonStyle.danger, custom_id=f'masoi_night_{room_id}')
         self.room_id = room_id
@@ -639,7 +971,6 @@ def masoi_action_label(role, phase):
     return labels.get(role, '🎯 Chọn mục tiêu')
 
 class MasoiActionSelect(discord.ui.Select):
-
     def __init__(self, room_id, role, phase):
         self.room_id = room_id
         self.role = role
@@ -682,13 +1013,11 @@ class MasoiActionSelect(discord.ui.Select):
         await interaction.response.send_message(f'<a:verify:1548178353859596320> **{masoi_action_label(self.role, self.phase)}**\n🎯 Mục tiêu: **{target_name}**\n🔒 Lựa chọn đã được ghi nhận riêng tư.', ephemeral=True)
 
 class MasoiActionView(discord.ui.View):
-
     def __init__(self, room_id, role, phase):
         super().__init__(timeout=300)
         self.add_item(MasoiActionSelect(room_id, role, phase))
 
 class MasoiRevealRoleButton(discord.ui.Button):
-
     def __init__(self, room_id):
         super().__init__(label='Xem vai của tôi', emoji='<:werewolf:1547564934299390082>', style=discord.ButtonStyle.primary, custom_id=f'masoi_reveal_{room_id}')
         self.room_id = room_id
@@ -711,7 +1040,6 @@ class MasoiRevealRoleButton(discord.ui.Button):
         await interaction.response.send_message(embed=embed, view=MasoiActionView(self.room_id, role, phase), ephemeral=True)
 
 class MasoiJoinView(discord.ui.View):
-
     def __init__(self, room_id):
         super().__init__(timeout=3600)
         self.room_id = room_id
@@ -795,9 +1123,7 @@ async def masoi_command(interaction: discord.Interaction):
 MURDER_ROLE_INFO = {'Murder': ('<:emoji_74:1547988313439215686>', 'Murder', 'Phe Sát Nhân • Mỗi đêm chọn 1 người để giết.'), 'Thám tử': ('<:emoji_71:1547988235127365772>', 'Thám tử', 'Phe Dân • Mỗi đêm điều tra 1 người và nhận manh mối.'), 'Bác sĩ': ('<:emoji_73:1547988300235800606>', 'Bác sĩ', 'Phe Dân • Mỗi đêm chọn 1 người để chữa trị.'), 'Bảo vệ': ('<:protect:1547583282034770000>', 'Bảo vệ', 'Phe Dân • Mỗi đêm bảo vệ 1 người, kể cả chính mình.'), 'Người thường (thất nghiệp)': ('<:villagers:1547581626379403355>', 'Người thường (thất nghiệp)', 'Phe Dân • Vô năng (thất nghiệp), không có kỹ năng ban đêm.')}
 
 MURDER_ROOMS = {}
-
 DISCUSSION_SECONDS = 180
-
 VOTE_SECONDS = 30
 
 def murder_role_list(n):
@@ -831,7 +1157,6 @@ def murder_target_options(room, actor_id, action):
     return [uid for uid in ids if uid != actor_id]
 
 class MurderTargetSelect(discord.ui.Select):
-
     def __init__(self, room_id, actor_id, action):
         self.room_id = room_id
         self.actor_id = actor_id
@@ -883,7 +1208,6 @@ class MurderTargetSelect(discord.ui.Select):
         await interaction.response.send_message(text, ephemeral=True)
 
 class MurderActionView(discord.ui.View):
-
     def __init__(self, room_id, actor_id, action):
         super().__init__(timeout=125)
         self.add_item(MurderTargetSelect(room_id, actor_id, action))
@@ -914,7 +1238,6 @@ class MurderBombCodeModal(discord.ui.Modal, title='💣 GỠ BOOM'):
         await murder_continue_after_bomb(room)
 
 class MurderBombView(discord.ui.View):
-
     def __init__(self, room_id, target_id, code):
         super().__init__(timeout=35)
         self.room_id = room_id
@@ -933,7 +1256,6 @@ class MurderBombView(discord.ui.View):
         await interaction.response.send_modal(MurderBombCodeModal(self.room_id, self.target_id, self.code))
 
 class MurderLobbyView(discord.ui.View):
-
     def __init__(self, room_id):
         super().__init__(timeout=600)
         self.room_id = room_id
@@ -999,7 +1321,6 @@ def murder_lobby_embed(room):
     return make_embed(title=f'{title_emoji} Murder • Birthdaytime', description=description, color=discord.Color.from_rgb(0, 0, 0))
 
 def murder_morning_status_embed(room, death_text=''):
-    """Bảng thông báo buổi sáng theo kiểu Ma Sói: tách người sống/chết và kết quả đêm."""
     guild = bot.get_guild(room.get('guild_id'))
     dead = set(room.get('dead', []))
     players = room.get('players', [])
@@ -1055,7 +1376,6 @@ async def murder_send_roles(room):
             print(f'[MURDER] Không thể DM role cho {uid}.')
 
 async def murder_lock_chat(room):
-    """Khóa chat của phòng Murder trong đêm. Admin/owner vẫn bị chặn bằng on_message."""
     channel = bot.get_channel(room['channel_id'])
     if not isinstance(channel, discord.TextChannel):
         return
@@ -1209,7 +1529,6 @@ async def murder_resolve_night(room):
     await murder_start_bomb(room)
 
 class MurderVoteButton(discord.ui.Button):
-
     def __init__(self, room_id, target_id):
         super().__init__(label='Bỏ phiếu', style=discord.ButtonStyle.danger)
         self.room_id = room_id
@@ -1227,7 +1546,6 @@ class MurderVoteButton(discord.ui.Button):
         await interaction.response.send_message('<a:verify:1548178353859596320> Đã ghi nhận phiếu bí mật.', ephemeral=True)
 
 class MurderVoteView(discord.ui.View):
-
     def __init__(self, room_id):
         super().__init__(timeout=30)
         self.room_id = room_id
@@ -1238,7 +1556,6 @@ class MurderVoteView(discord.ui.View):
                 self.add_item(MurderVoteButton(room_id, uid))
 
 async def murder_day_timer(room_id):
-    """3 phút thảo luận, 30 giây cuối là thời gian bỏ phiếu."""
     try:
         await asyncio.sleep(max(0, DISCUSSION_SECONDS - VOTE_SECONDS))
         room = MURDER_ROOMS.get(room_id)
@@ -1339,10 +1656,8 @@ async def murder_command(interaction: discord.Interaction):
     MURDER_ROOMS[room_id] = {'room_id': room_id, 'guild_id': interaction.guild_id, 'channel_id': interaction.channel_id, 'host': interaction.user.id, 'players': [interaction.user.id], 'roles': {}, 'dead': [], 'actions': {}, 'votes': {}, 'started': False, 'phase': 'lobby', 'round': 0, 'max_players': 15, 'game_finished': False, 'phase_task': None, 'detective_clues': {}, 'detective_morning_reveal': None, 'bomb_target': None, 'bomb_status': None, 'bomb_code': None, 'chat_locked': False, 'voting_open': False}
     room = MURDER_ROOMS[room_id]
     await interaction.response.send_message(embed=murder_lobby_embed(room), view=MurderLobbyView(room_id))
-
-# ============================================================
+    # ============================================================
 # HỆ THỐNG COIN DÙNG CHUNG — LƯU BẰNG JSON
-# Bầu Cua + Ma Sói + Murder dùng chung số dư. 
 # ============================================================
 COIN_FILE = 'coins.json'
 COIN_DEFAULT = 1000
@@ -1388,9 +1703,9 @@ def baucua_change_coins(user_id: int, amount: int):
     return new_value
 
 BAUCUA_EMOJIS = {
-    'bau': discord.PartialEmoji(name='bau', id=1548524879748272250),
+    'bau': '<:bau:1548524879748272250>',
     'cua': discord.PartialEmoji(name='crab', id=1548515170203209728, animated=True),
-    'tom': discord.PartialEmoji(name='tom', id=1548525583711871067),
+    'tom': '<:tom:1548525583711871067>',
     'ca': discord.PartialEmoji(name='fish', id=1548514999347974164, animated=True),
     'nai': discord.PartialEmoji(name='deer', id=1548514158994259978, animated=True),
     'ga': discord.PartialEmoji(name='rooster', id=1548514657889820762, animated=True),
@@ -1399,27 +1714,24 @@ BAUCUA_EMOJIS = {
 BAUCUA_TITLE_EMOJI = discord.PartialEmoji(name='baucuatomca', id=1261790169011458139, animated=True)
 GAME_WIN_REWARD = 50000
 BAUCUA_ROUND_SECONDS = 30
-CONFIRM_TIMEOUT = 300  # 5 phút
+CONFIRM_TIMEOUT = 300
 
 baucua_round = None
-
 
 def coin_display(user_id: int) -> str:
     if user_id == SPECIAL_ADMIN_ID:
         return '∞'
     return f'{baucua_get_coins(user_id):,}'
 
-
 def game_coin_reward_embed(game_name, winners, reward, winner_label):
     lines = [f'{mention} đã húp được **{reward:,}**<a:coin:1548707654459727964>' for mention in winners[:25]]
     description = f'{winner_label}\n' + ('\n'.join(lines) if lines else 'Không có người nhận thưởng.')
     return make_embed(title=f'<a:coin:1548707654459727964> {game_name} • THƯỞNG COIN', description=description, color=discord.Color.from_rgb(0, 0, 0))
 
-
 class BauCuaBetModal(discord.ui.Modal, title='Đặt cược Bầu Cua'):
     amount = discord.ui.TextInput(
         label='Số coin muốn đặt',
-        placeholder='Nhập số coin của mem dùng để cược! (tối đa 250.000)',
+        placeholder='Nhập số coin muốn cược...',
         required=True,
         max_length=12,
     )
@@ -1435,8 +1747,8 @@ class BauCuaBetModal(discord.ui.Modal, title='Đặt cược Bầu Cua'):
         except ValueError:
             return await interaction.response.send_message('<a:failed:1548973085741547580> Số coin phải là số nguyên.', ephemeral=True)
 
-        if amount <= 0 or amount > 250000:
-            return await interaction.response.send_message('<a:failed:1548973085741547580> Số cược phải từ **1** đến **250.000 coin**.', ephemeral=True)
+        if amount <= 0:
+            return await interaction.response.send_message('<a:failed:1548973085741547580> Số cược phải lớn hơn 0.', ephemeral=True)
 
         if not baucua_round or not baucua_round.get('open'):
             return await interaction.response.send_message('<a:failed:1548973085741547580> Hiện không có ván Bầu Cua đang mở.', ephemeral=True)
@@ -1444,7 +1756,7 @@ class BauCuaBetModal(discord.ui.Modal, title='Đặt cược Bầu Cua'):
         uid = interaction.user.id
         infinite = uid == SPECIAL_ADMIN_ID
         balance = baucua_get_coins(uid)
-        if not infinite and amount > balance:
+        if amount > balance and not infinite:
             return await interaction.response.send_message(f'<a:failed:1548973085741547580> Bạn chỉ có **{balance:,} coin**.', ephemeral=True)
 
         if not infinite:
@@ -1462,7 +1774,6 @@ class BauCuaBetModal(discord.ui.Modal, title='Đặt cược Bầu Cua'):
             f'<a:verify:1548178353859596320> Đã đặt **{amount:,} coin** vào {BAUCUA_EMOJIS[self.choice]}. Còn **{remaining} giây**.',
             ephemeral=True,
         )
-
 
 class BauCuaView(discord.ui.View):
     def __init__(self):
@@ -1493,7 +1804,6 @@ class BauCuaView(discord.ui.View):
         for item in self.children:
             item.disabled = True
 
-
 async def finish_baucua_round(channel, game_message=None, view=None):
     global baucua_round
     if not baucua_round or not baucua_round.get('open'):
@@ -1511,19 +1821,22 @@ async def finish_baucua_round(channel, game_message=None, view=None):
         matches = result.count(bet['choice'])
         reward = bet['amount'] * matches
         if not bet['infinite'] and matches:
-            # Hoàn tiền cược + tiền thắng.
             baucua_change_coins(bet['user_id'], bet['amount'] + reward)
 
         net = reward if matches else -bet['amount']
+        bet_emoji = str(BAUCUA_EMOJIS[bet['choice']])
         if net > 0:
-            winners.append(f"<@{bet['user_id']}> đã lụm được **{net:,}**<a:coin:1548707654459727964>")
+            winners.append(
+                f"<@{bet['user_id']}> cược {bet_emoji} -> đã lụm `{net:,}` coin"
+            )
         else:
-            losers.append(f"<@{bet['user_id']}> đã tạch **{abs(net):,}**<a:coin:1548707654459727964>")
+            losers.append(
+                f"<@{bet['user_id']}> cược {bet_emoji} -> tạch `{abs(net):,}` coin"
+            )
 
     if view is not None:
         view.disable_all()
 
-    # 1) Đổi Embed đang cược thành trạng thái đã khóa.
     if game_message is not None:
         locked_embed = make_embed(
             title='🦀 Bầu cua • BirthdayTime',
@@ -1538,7 +1851,6 @@ async def finish_baucua_round(channel, game_message=None, view=None):
         except discord.HTTPException:
             pass
 
-    # 2) Hiển thị 3 emoji loading trên cùng một dòng, rồi thay từng vị trí sau mỗi giây.
     loading_emoji = '<a:loading:1548997886098935848>'
     result_line = [loading_emoji, loading_emoji, loading_emoji]
     result_message = await channel.send('    '.join(result_line))
@@ -1551,7 +1863,6 @@ async def finish_baucua_round(channel, game_message=None, view=None):
         except discord.HTTPException:
             pass
 
-    # 3) Gửi Embed kết quả riêng.
     result_lines = ['**Kết quả:**']
     if winners:
         result_lines.extend(winners[:25])
@@ -1568,7 +1879,6 @@ async def finish_baucua_round(channel, game_message=None, view=None):
     await channel.send(embed=result_embed)
     baucua_round = None
 
-
 @bot.tree.command(name='baucua', description='Mở ván Bầu Cua trong 30 giây')
 async def baucua(interaction: discord.Interaction):
     global baucua_round
@@ -1582,7 +1892,7 @@ async def baucua(interaction: discord.Interaction):
         description=(
             'BirthdayTime nhà cái đến từ Châu Phi\n\n'
             'Đặt cược bằng cách chọn một con\n'
-            'Các mem có <a:clock:1548984730765099088>30 giây đặt cược, hãy cẩn trọng trước khi cược!'
+            'Các mem có 30 giây đặt cược, hãy cẩn trọng trước khi cược!'
         ),
         color=discord.Color.from_rgb(0, 0, 0),
     )
@@ -1597,7 +1907,7 @@ async def baucua(interaction: discord.Interaction):
         embed.description = (
             'BirthdayTime nhà cái đến từ Châu Phi\n\n'
             'Đặt cược bằng cách chọn một con\n'
-            f'Các mem có <a:clock:1548984730765099088>{remaining} giây đặt cược, hãy cẩn trọng trước khi cược!'
+            f'Các mem có {remaining} giây đặt cược, hãy cẩn trọng trước khi cược!'
         )
         try:
             await game_message.edit(embed=embed, view=view)
@@ -1606,7 +1916,6 @@ async def baucua(interaction: discord.Interaction):
 
     if baucua_round and baucua_round.get('open'):
         await finish_baucua_round(interaction.channel, game_message, view)
-
 
 class GiveConfirmView(discord.ui.View):
     def __init__(self, ctx, member, amount):
@@ -1676,7 +1985,6 @@ class GiveConfirmView(discord.ui.View):
         self.disable_all()
         await interaction.response.edit_message(embed=make_embed(title='<a:failed:1548973085741547580> Đã hủy give', description='Giao dịch chưa được thực hiện.', color=discord.Color.from_rgb(0, 0, 0)), view=self)
 
-
 class LixiConfirmView(discord.ui.View):
     def __init__(self, ctx, amount, recipients):
         super().__init__(timeout=CONFIRM_TIMEOUT)
@@ -1744,7 +2052,6 @@ class LixiConfirmView(discord.ui.View):
         self.disable_all()
         await interaction.response.edit_message(embed=make_embed(title='<a:failed:1548973085741547580> Đã hủy lì xì', description='Không ai được cộng coin.', color=discord.Color.from_rgb(0, 0, 0)), view=self)
 
-
 class AnXinConfirmView(discord.ui.View):
     def __init__(self, ctx, recipient, amount):
         super().__init__(timeout=CONFIRM_TIMEOUT)
@@ -1807,7 +2114,6 @@ class AnXinConfirmView(discord.ui.View):
         self.disable_all()
         await interaction.response.edit_message(embed=make_embed(title='<a:failed:1548973085741547580> Đã từ chối', description=f'{self.recipient.mention} đã từ chối yêu cầu ăn xin.', color=discord.Color.from_rgb(0, 0, 0)), view=self)
 
-
 @bot.command(name='coin')
 async def coin_command(ctx):
     balance = coin_display(ctx.author.id)
@@ -1817,7 +2123,6 @@ async def coin_command(ctx):
         color=discord.Color.from_rgb(0, 0, 0),
     )
     await ctx.send(embed=embed)
-
 
 @bot.command(name='give')
 async def give_command(ctx, member: discord.Member = None, amount: int = None):
@@ -1839,7 +2144,6 @@ async def give_command(ctx, member: discord.Member = None, amount: int = None):
     )
     view = GiveConfirmView(ctx, member, amount)
     view.message = await ctx.send(embed=embed, view=view)
-
 
 @bot.command(name='lixi')
 async def lixi_command(ctx, amount: int = None):
@@ -1864,7 +2168,6 @@ async def lixi_command(ctx, amount: int = None):
     view = LixiConfirmView(ctx, amount, recipients)
     view.message = await ctx.send(embed=embed, view=view)
 
-
 @bot.command(name='anxin')
 async def anxin_command(ctx, member: discord.Member = None, amount: int = None):
     if member is None or amount is None:
@@ -1885,7 +2188,6 @@ async def anxin_command(ctx, member: discord.Member = None, amount: int = None):
     )
     view = AnXinConfirmView(ctx, member, amount)
     view.message = await ctx.send(embed=embed, view=view)
-
 
 class NhanRoleModal(discord.ui.Modal, title='Nhận Role'):
     role_id = discord.ui.TextInput(
@@ -1925,18 +2227,17 @@ class NhanRoleModal(discord.ui.Modal, title='Nhận Role'):
         except discord.HTTPException as e:
             await interaction.response.send_message(f'<a:failed:1548973085741547580> Discord báo lỗi: `{e}`', ephemeral=True)
 
-
 @bot.tree.command(name='nhanrole', description='Mở form để nhận role')
 @discord.app_commands.checks.has_permissions(administrator=True)
 async def nhanrole(interaction: discord.Interaction):
     await interaction.response.send_modal(NhanRoleModal())
 
+# ============================================================
+# QUEST SYSTEM
+# ============================================================
 ORB_CONFIG_FILE = 'quest_config.json'
-
 ORB_SEEN_FILE = 'quest_seen.json'
-
 PUBLIC_QUEST_API = 'https://api.discordquest.com/api/quests'
-
 QUEST_POLL_SECONDS = 60
 
 def _load_quest_config():
@@ -1953,7 +2254,6 @@ def _save_quest_config(data):
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 _quest_config = _load_quest_config()
-
 ORB_CHANNEL_ID = _quest_config.get('quest_channel_id')
 
 def _load_seen_quests():
@@ -1972,35 +2272,91 @@ def _save_seen_quests(seen):
         json.dump(values, f, ensure_ascii=False, indent=2)
 
 SEEN_QUEST_IDS = _load_seen_quests()
-
 QUEST_SCANNER_STARTED = False
+QUEST_SCAN_LOCK = asyncio.Lock()
 
 class QuestView(discord.ui.View):
-
     def __init__(self, quest_url: str):
         super().__init__(timeout=None)
         if quest_url:
             self.add_item(discord.ui.Button(label='View Quest', style=discord.ButtonStyle.link, emoji='🔗', url=quest_url))
 
 def tao_quest_embed(ten_nhiem_vu: str, mo_ta: str, reward: str, quest_id: str, thoi_gian_ket_thuc: str):
-    embed = discord.Embed(title='<a:quest:1548628005012906047> nhiệm vụ mới nè các mem!', description=f'**{ten_nhiem_vu}**\n\n{mo_ta}', color=5793266)
-    embed.add_field(name='<a:orb:1548623915121770577> Reward', value=f'**{reward}**', inline=False)
-    embed.add_field(name='<a:thongbao:1548169803540201582> Ends', value=thoi_gian_ket_thuc, inline=False)
-    embed.add_field(name='<a:lightningbolt:1508330216181731441> Quest ID', value=f'`{quest_id}`', inline=False)
-    embed.set_footer(text='Auto Quests Bot • Discord Quest')
+    embed = discord.Embed(
+        title='<a:quest:1548628005012906047> Nhiệm vụ mới nè các mem!',
+        description=f'**Tên Quest:** {ten_nhiem_vu}\n\n{mo_ta}',
+        color=5793266
+    )
+    embed.add_field(
+        name='<a:orb:1548623915121770577> Reward',
+        value=f'`{reward}`',
+        inline=False
+    )
+    embed.add_field(
+        name='<a:thongbao:1548169803540201582> Ends',
+        value=thoi_gian_ket_thuc,
+        inline=False
+    )
+    embed.add_field(
+        name='<a:lightningbolt:1508330216181731441> Quest ID',
+        value=f'`{quest_id}`',
+        inline=False
+    )
     return embed
 
 async def thong_bao_orb(ten_nhiem_vu: str, mo_ta: str, reward: str='Orb', quest_id: str='Chưa có', thoi_gian_ket_thuc: str='Chưa có', quest_url: str | None=None):
-    """Gửi embed nhiệm vụ Orb vào kênh đã setup."""
     channel = bot.get_channel(ORB_CHANNEL_ID)
     if channel is None:
         print('Chưa setup kênh Quest hoặc không tìm thấy kênh.')
         return False
-    embed = tao_quest_embed(ten_nhiem_vu=ten_nhiem_vu, mo_ta=mo_ta, reward=reward, quest_id=quest_id, thoi_gian_ket_thuc=thoi_gian_ket_thuc)
-    if quest_url:
-        await channel.send(embed=embed, view=QuestView(quest_url))
-    else:
-        await channel.send(embed=embed)
+    if not ten_nhiem_vu or str(ten_nhiem_vu).startswith('Quest #'):
+        return False
+    embed = tao_quest_embed(ten_nhiem_vu, mo_ta, reward, quest_id, thoi_gian_ket_thuc)
+    try:
+        if quest_url:
+            await channel.send(embed=embed, view=QuestView(quest_url))
+        else:
+            await channel.send(embed=embed)
+        return True
+    except Exception as e:
+        print(f'[Quest] Không gửi được thông báo: {e}')
+        return False
+
+def _parse_quest_time(value):
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.datetime.fromtimestamp(value, tz=datetime.timezone.utc)
+        except Exception:
+            return None
+    text = str(value).strip()
+    try:
+        return datetime.datetime.fromisoformat(text.replace('Z', '+00:00'))
+    except Exception:
+        return None
+
+def _quest_is_active(q):
+    if not isinstance(q, dict):
+        return False
+    now = datetime.datetime.now(datetime.timezone.utc)
+    status = str(_first_value(q, 'status', 'state', default='')).lower()
+    if status in {'ended', 'expired', 'inactive', 'completed', 'disabled', 'closed'}:
+        return False
+    starts = _first_value(q, 'starts_at', 'startsAt', 'start_at', 'startAt', 'starts')
+    ends = _first_value(q, 'expires_at', 'expiresAt', 'end_at', 'endAt', 'ends_at', 'endsAt', 'expiration', 'expiration_date', 'expirationDate')
+    start_dt = _parse_quest_time(starts)
+    end_dt = _parse_quest_time(ends)
+    if start_dt is not None:
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=datetime.timezone.utc)
+        if now < start_dt:
+            return False
+    if end_dt is not None:
+        if end_dt.tzinfo is None:
+            end_dt = end_dt.replace(tzinfo=datetime.timezone.utc)
+        if now >= end_dt:
+            return False
     return True
 
 def _first_value(data, *keys, default=None):
@@ -2013,7 +2369,6 @@ def _first_value(data, *keys, default=None):
     return default
 
 def _quest_list_from_public_data(data):
-    """Cho phép API trả về list hoặc object chứa quests/items/data."""
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
@@ -2024,30 +2379,27 @@ def _quest_list_from_public_data(data):
     return []
 
 def _normalize_public_quest(q):
-    """Chuẩn hóa vài kiểu field thường gặp thành format embed của bot."""
-    if not isinstance(q, dict):
+    if not isinstance(q, dict) or not _quest_is_active(q):
         return None
     qid = _first_value(q, 'id', 'quest_id', 'questId')
     if qid is None:
         return None
-    title = _first_value(q, 'title', 'name', 'quest_name', 'questName', 'game_title', 'gameTitle', default=f'Quest #{qid}')
+    title = _first_value(q, 'title', 'name', 'quest_name', 'questName', 'game_title', 'gameTitle')
+    if not title:
+        return None
     description = _first_value(q, 'description', 'desc', 'details', 'message', default='Hoàn thành nhiệm vụ để nhận phần thưởng.')
     reward = _first_value(q, 'reward', 'rewards', 'reward_text', 'rewardText', default='Orb')
     if isinstance(reward, dict):
-        amount = _first_value(reward, 'amount', 'value', 'quantity')
-        kind = _first_value(reward, 'type', 'name', 'currency', default='Orb')
+        amount = _first_value(reward, 'amount', 'value', 'quantity', 'orb_quantity', 'orbQuantity')
+        kind = _first_value(reward, 'name', 'currency', 'type', default='Orb')
         reward = f'{amount} {kind}' if amount is not None else str(kind)
     elif isinstance(reward, list):
-        reward = ', '.join((str(x) for x in reward[:5])) or 'Orb'
+        reward = ' | '.join(str(x) for x in reward[:5]) or 'Orb'
     end_at = _first_value(q, 'expires_at', 'expiresAt', 'end_at', 'endAt', 'ends_at', 'endsAt', 'expiration', 'expiration_date', 'expirationDate', default='Chưa có')
-    quest_url = _first_value(q, 'url', 'quest_url', 'questUrl', 'link', 'deep_link', 'deepLink')
-    if not quest_url:
-        quest_url = f'https://discord.com/quest-home'
+    quest_url = _first_value(q, 'url', 'quest_url', 'questUrl', 'link', 'deep_link', 'deepLink', default='https://discord.com/quest-home')
     return {'id': str(qid), 'name': str(title), 'description': str(description), 'reward': str(reward), 'ends': str(end_at), 'url': str(quest_url)}
 
 async def _fetch_public_quests():
-    """Lấy dataset Quest công khai từ nguồn bên thứ ba; không dùng Discord user token."""
-
     def _request():
         req = urllib.request.Request(PUBLIC_QUEST_API, headers={'User-Agent': 'DiscordQuestNotifier/1.0', 'Accept': 'application/json'})
         with urllib.request.urlopen(req, timeout=15) as response:
@@ -2056,31 +2408,58 @@ async def _fetch_public_quests():
             return json.loads(response.read().decode('utf-8'))
     try:
         data = await asyncio.to_thread(_request)
-        return [_normalize_public_quest(q) for q in _quest_list_from_public_data(data) if _normalize_public_quest(q)]
+        normalized = []
+        for q in _quest_list_from_public_data(data):
+            item = _normalize_public_quest(q)
+            if item:
+                normalized.append(item)
+        return normalized
     except Exception as e:
         print(f'[Quest] Không lấy được public Quest API: {e}')
         return []
 
 async def scan_public_quests(notify_new=True):
-    """Quét Quest và gửi những ID mới vào kênh /setuporb."""
     global SEEN_QUEST_IDS
-    quests = await _fetch_public_quests()
-    if not quests:
-        return 0
-    if not SEEN_QUEST_IDS:
-        SEEN_QUEST_IDS.update((q['id'] for q in quests))
-        _save_seen_quests(SEEN_QUEST_IDS)
-        print(f'[Quest] Đã tạo baseline {len(quests)} Quest.')
-        return 0
-    new_quests = [q for q in quests if q['id'] not in SEEN_QUEST_IDS]
-    for q in new_quests:
-        if notify_new:
-            await thong_bao_orb(ten_nhiem_vu=q['name'], mo_ta=q['description'], reward=q['reward'], quest_id=q['id'], thoi_gian_ket_thuc=q['ends'], quest_url=q['url'])
-        SEEN_QUEST_IDS.add(q['id'])
-    if new_quests:
-        _save_seen_quests(SEEN_QUEST_IDS)
-        print(f'[Quest] Phát hiện {len(new_quests)} Quest mới.')
-    return len(new_quests)
+    async with QUEST_SCAN_LOCK:
+        quests = await _fetch_public_quests()
+        if not quests:
+            return 0
+
+        if not SEEN_QUEST_IDS:
+            SEEN_QUEST_IDS.update(q['id'] for q in quests)
+            _save_seen_quests(SEEN_QUEST_IDS)
+            print(f'[Quest] Đã tạo baseline {len(quests)} Quest, không gửi thông báo.')
+            return 0
+
+        new_quests = []
+        batch_ids = set()
+        for q in quests:
+            qid = str(q['id'])
+            if qid not in SEEN_QUEST_IDS and qid not in batch_ids:
+                batch_ids.add(qid)
+                new_quests.append(q)
+
+        sent_count = 0
+        for q in new_quests:
+            if notify_new:
+                sent = await thong_bao_orb(
+                    ten_nhiem_vu=q['name'],
+                    mo_ta=q['description'],
+                    reward=q['reward'],
+                    quest_id=q['id'],
+                    thoi_gian_ket_thuc=q['ends'],
+                    quest_url=q['url']
+                )
+                if sent:
+                    SEEN_QUEST_IDS.add(str(q['id']))
+                    sent_count += 1
+            else:
+                SEEN_QUEST_IDS.add(str(q['id']))
+
+        if new_quests:
+            _save_seen_quests(SEEN_QUEST_IDS)
+            print(f'[Quest] Phát hiện {len(new_quests)} Quest mới, đã thông báo {sent_count}.')
+        return len(new_quests)
 
 @tasks.loop(seconds=QUEST_POLL_SECONDS)
 async def quest_auto_scanner():
@@ -2093,7 +2472,6 @@ async def quest_auto_scanner_before_loop():
 @bot.tree.command(name='setuporb', description='Cài kênh nhận thông báo Quest')
 @discord.app_commands.checks.has_permissions(administrator=True)
 async def setup_quest(interaction: discord.Interaction):
-    """Cài kênh nhận thông báo Quest bằng slash command /setuporb."""
     global ORB_CHANNEL_ID
     ORB_CHANNEL_ID = interaction.channel_id
     _quest_config['quest_channel_id'] = ORB_CHANNEL_ID
@@ -2109,6 +2487,9 @@ async def scan_orb(interaction: discord.Interaction):
     count = await scan_public_quests(notify_new=True)
     await interaction.followup.send(f'<:__:1506650257272868865> Đã quét Quest. Phát hiện **{count}** Quest mới.', ephemeral=True)
 
+# ============================================================
+# EVENT
+# ============================================================
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
@@ -2123,6 +2504,7 @@ async def on_message(message: discord.Message):
 @bot.event
 async def on_ready():
     print(f"🤖 Bot đã đăng nhập: {bot.user}")
+    bot.add_view(BoostView())
     try:
         if not check_birthdays.is_running():
             check_birthdays.start()
@@ -2138,7 +2520,6 @@ async def on_ready():
         print(f"✨ Đã sync {len(synced)} lệnh slash.")
     except Exception as e:
         print(f"⚠️ Lỗi sync slash: {e}")
-
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 if __name__ == "__main__":
