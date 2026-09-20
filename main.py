@@ -10,12 +10,6 @@ import json
 import urllib.parse
 import urllib.request
 import random
-import time
-import hashlib
-import base64
-import aiohttp
-from discord.ui import View, Button, Modal, TextInput
-
 import yt_dlp
 
 intents = discord.Intents.default()
@@ -27,322 +21,6 @@ if hasattr(intents, 'polls'):
 intents.guilds = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
-
-# ============================================================
-# CẤU HÌNH BOOST FAKE
-# ============================================================
-BOOST_TOKENS = [
-    "TOKEN_USER_1",
-    "TOKEN_USER_2",
-    "TOKEN_USER_3"
-]
-
-BOOST_ROLE_ID = 123456789012345678
-
-# Chỉ ID người dùng này mới được phép fake boost
-ALLOWED_BOOST_USER_ID = 1548490039158251531
-
-# ============================================================
-# MODULE CHỐNG PHÁT HIỆN KHI BOOST
-# ============================================================
-ANTI_DETECT_CONFIG = {
-    "min_delay": 8,
-    "max_delay": 25,
-    "jitter": True,
-    "rotate_ua": True,
-    "rotate_fingerprint": True,
-    "max_per_hour": 8,
-    "cooldown_after_batch": 120,
-    "batch_size": 3,
-    "max_retry": 2,
-    "retry_delay": 30,
-}
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
-]
-
-ACCEPT_LANGUAGES = [
-    "en-US,en;q=0.9",
-    "en-GB,en;q=0.9",
-    "vi-VN,vi;q=0.9,en;q=0.8",
-    "en-CA,en;q=0.9,fr;q=0.8",
-    "en-AU,en;q=0.9",
-]
-
-ACCEPT_ENCODINGS = [
-    "gzip, deflate, br",
-    "gzip, deflate",
-    "gzip, deflate, br, zstd",
-]
-
-_request_timestamps = []
-
-def _random_delay():
-    if ANTI_DETECT_CONFIG["jitter"]:
-        return random.uniform(
-            ANTI_DETECT_CONFIG["min_delay"],
-            ANTI_DETECT_CONFIG["max_delay"]
-        )
-    return ANTI_DETECT_CONFIG["min_delay"]
-
-def _get_random_headers(user_token):
-    headers = {
-        "Authorization": user_token,
-        "Content-Type": "application/json",
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept": "*/*",
-        "Accept-Language": random.choice(ACCEPT_LANGUAGES),
-        "Accept-Encoding": random.choice(ACCEPT_ENCODINGS),
-        "Origin": "https://discord.com",
-        "Referer": "https://discord.com/channels/@me",
-        "DNT": "1",
-        "Connection": "keep-alive",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin",
-        "X-Discord-Locale": random.choice(["en-US", "vi", "en-GB"]),
-        "X-Discord-Timezone": random.choice([
-            "Asia/Ho_Chi_Minh",
-            "America/New_York",
-            "Europe/London",
-            "Asia/Tokyo",
-        ]),
-        "X-Super-Properties": "",
-    }
-
-    super_props = {
-        "os": random.choice(["Windows", "Mac OS X", "Linux"]),
-        "browser": random.choice(["Chrome", "Firefox", "Safari"]),
-        "device": "",
-        "system_locale": random.choice(["en-US", "vi"]),
-        "browser_user_agent": headers["User-Agent"],
-        "browser_version": "120.0.0.0",
-        "os_version": "10",
-        "referrer": "",
-        "referring_domain": "",
-        "referrer_current": "",
-        "referring_domain_current": "",
-        "release_channel": "stable",
-        "client_build_number": random.randint(250000, 260000),
-        "client_event_source": None,
-    }
-    headers["X-Super-Properties"] = base64.b64encode(
-        json.dumps(super_props).encode()
-    ).decode()
-
-    if ANTI_DETECT_CONFIG["rotate_fingerprint"]:
-        fingerprint = hashlib.md5(
-            f"{user_token}{time.time()}{random.random()}".encode()
-        ).hexdigest()
-        headers["X-Fingerprint"] = fingerprint
-
-    return headers
-
-def _check_rate_limit():
-    global _request_timestamps
-    now = time.time()
-    _request_timestamps = [t for t in _request_timestamps if now - t < 3600]
-    if len(_request_timestamps) >= ANTI_DETECT_CONFIG["max_per_hour"]:
-        wait_time = 3600 - (now - _request_timestamps[0]) + 5
-        return False, wait_time
-    return True, 0
-
-def _record_request():
-    global _request_timestamps
-    _request_timestamps.append(time.time())
-
-async def send_boost_safe(user_token, guild_id, retry=0):
-    allowed, wait_time = _check_rate_limit()
-    if not allowed:
-        print(f"[ANTI-DETECT] Đạt giới hạn request/giờ. Chờ {wait_time:.0f}s...")
-        await asyncio.sleep(wait_time)
-
-    delay = _random_delay()
-    print(f"[ANTI-DETECT] Delay {delay:.1f}s trước khi gửi...")
-    await asyncio.sleep(delay)
-
-    url = f"https://discord.com/api/v9/guilds/{guild_id}/premium/subscriptions"
-    headers = _get_random_headers(user_token)
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.put(url, headers=headers) as resp:
-                status = resp.status
-                _record_request()
-
-                if status == 429:
-                    retry_after = int(resp.headers.get("Retry-After", 60))
-                    print(f"[ANTI-DETECT] Bị rate limit. Chờ {retry_after}s...")
-                    await asyncio.sleep(retry_after + random.uniform(5, 15))
-                    if retry < ANTI_DETECT_CONFIG["max_retry"]:
-                        return await send_boost_safe(user_token, guild_id, retry + 1)
-                    return status
-
-                if status in (401, 403):
-                    print(f"[ANTI-DETECT] Token bị từ chối ({status}). Dừng token này.")
-                    return status
-
-                if status == 400:
-                    print(f"[ANTI-DETECT] Request không hợp lệ (400).")
-                    return status
-
-                if status in (200, 201):
-                    print(f"[ANTI-DETECT] Boost thành công.")
-
-                return status
-
-    except aiohttp.ClientError as e:
-        print(f"[ANTI-DETECT] Lỗi kết nối: {e}")
-        if retry < ANTI_DETECT_CONFIG["max_retry"]:
-            await asyncio.sleep(ANTI_DETECT_CONFIG["retry_delay"])
-            return await send_boost_safe(user_token, guild_id, retry + 1)
-        return -1
-    except Exception as e:
-        print(f"[ANTI-DETECT] Lỗi không xác định: {e}")
-        return -1
-
-async def send_boost_batched(user_token, guild_id, count):
-    batch_size = ANTI_DETECT_CONFIG["batch_size"]
-    cooldown = ANTI_DETECT_CONFIG["cooldown_after_batch"]
-    results = []
-
-    for i in range(count):
-        status = await send_boost_safe(user_token, guild_id)
-        results.append(status)
-
-        if (i + 1) % batch_size == 0 and (i + 1) < count:
-            print(f"[ANTI-DETECT] Nghỉ {cooldown}s sau batch {(i+1)//batch_size}...")
-            await asyncio.sleep(cooldown + random.uniform(10, 30))
-
-    return results
-
-# ============================================================
-# MODAL BOOST
-# ============================================================
-class BoostModal(Modal, title="Nhập thông tin boost"):
-    guild_id = TextInput(
-        label="ID Server",
-        placeholder="Nhập ID server cần boost",
-        required=True
-    )
-    boost_count = TextInput(
-        label="Số boost",
-        placeholder="Nhập số boost cần boost",
-        required=True
-    )
-    boost_days = TextInput(
-        label="Số ngày boost có hiệu lực",
-        placeholder="Ví dụ: 7, 14, 30",
-        required=True,
-        max_length=3
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if interaction.user.id != ALLOWED_BOOST_USER_ID:
-            await interaction.response.send_message(
-                "<a:failed:1548973085741547580> Bạn không có quyền sử dụng chức năng này.",
-                ephemeral=True
-            )
-            return
-
-        try:
-            gid = int(self.guild_id.value)
-            count = int(self.boost_count.value)
-            days = int(self.boost_days.value)
-        except ValueError:
-            await interaction.response.send_message(
-                "Dữ liệu không hợp lệ. ID server, số boost và số ngày phải là số nguyên.",
-                ephemeral=True
-            )
-            return
-
-        if count <= 0:
-            await interaction.response.send_message("Số boost phải lớn hơn 0.", ephemeral=True)
-            return
-
-        if days <= 0 or days > 365:
-            await interaction.response.send_message("Số ngày boost phải từ 1 đến 365.", ephemeral=True)
-            return
-
-        await interaction.response.send_message(
-            f"Bắt đầu boost **{count}** lần cho server `{gid}` trong **{days} ngày**...\n"
-            f"Đang chạy chế độ chống phát hiện (delay ngẫu nhiên).",
-            ephemeral=True
-        )
-
-        expire_at = datetime.datetime.now(VN_TZ) + datetime.timedelta(days=days)
-
-        per_token = max(1, count // len(BOOST_TOKENS))
-        total_sent = 0
-        total_success = 0
-
-        for token in BOOST_TOKENS:
-            results = await send_boost_batched(token, gid, per_token)
-            total_sent += len(results)
-            total_success += sum(1 for r in results if r in (200, 201))
-
-        embed = discord.Embed(
-            title="<a:verify:1548178353859596320> Boost hoàn tất",
-            description=(
-                f"**Server:** `{gid}`\n"
-                f"**Số boost gửi:** `{total_sent}`\n"
-                f"**Thành công:** `{total_success}`\n"
-                f"**Thời hạn:** `{days}` ngày\n"
-                f"**Hết hạn lúc:** `{expire_at.strftime('%H:%M:%S %d/%m/%Y')}`"
-            ),
-            color=0x2b2d31
-        )
-        add_standard_footer(embed)
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-# ============================================================
-# VIEW BOOST
-# ============================================================
-class BoostView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(
-        label="Boost",
-        style=discord.ButtonStyle.primary,
-        emoji="<a:emoji_92:1548635996491616287>",
-        custom_id="boost_button"
-    )
-    async def boost_button(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id != ALLOWED_BOOST_USER_ID:
-            await interaction.response.send_message(
-                "<a:failed:1548973085741547580> Bạn không có quyền sử dụng chức năng này.",
-                ephemeral=True
-            )
-            return
-        await interaction.response.send_modal(BoostModal())
-
-# ============================================================
-# LỆNH SETUP BOOST
-# ============================================================
-@bot.command(name='setupboost')
-async def setupboost(ctx):
-    if ctx.author.id != ALLOWED_BOOST_USER_ID:
-        await ctx.send("<a:failed:1548973085741547580> Bạn không có quyền sử dụng lệnh này.")
-        return
-
-    embed = discord.Embed(
-        title="<a:emoji_92:1548635996491616287>BirthdayTime • Boost",
-        description="Nhấn nút boost để nhập ID server và nhập số boost cần boost",
-        color=0x2b2d31
-    )
-    await ctx.send(embed=embed, view=BoostView())
-
-# ============================================================
-# DATABASE
-# ============================================================
 db_conn = sqlite3.connect('database.db')
 db_cursor = db_conn.cursor()
 
@@ -420,6 +98,7 @@ db_conn.commit()
 voice_keepalive_tasks = {}
 
 async def keep_voice_connected(guild_id: int, channel_id: int):
+    """Giữ bot trong voice channel và tự kết nối lại khi bị ngắt."""
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
@@ -463,18 +142,15 @@ server_boost_channels = {}
 server_stats_channels = {}
 
 WELCOME_CONFIG = {'channel_id': None, 'message': 'Chào mừng {name} đã gia nhập **{server}**!\n\n**Chào con vk:** {member}\n**Con vk là thành viên:** `{number}`\nNhững người hỗ trợ:<@1315601796424794173>,<@1073202800965713961>,<@1502755916334760169> & <@1466395005487812620>\nDev Web: <@999253748616548362>\nDev Bot: <@1548490039158251531>', 'gif_path': 'welcome_gif.gif'}
-
 BOOST_CONFIG = {'channel_id': None, 'message': 'Cảm ơn {member} đã Boost máy chủ **{server}** để giúp server ngày càng phát triển hơn! 🚀💎', 'gif_path': 'boost_gif.gif'}
-
 LEVEL_ROLE_MILESTONES = [1, 25, 50, 100, 200]
-
 LEVELUP_CONFIG = {'message': 'Chúc mừng {member} đã đạt đến **Cấp độ {level} / 300**! 🌟{role_mention}', 'gif_path': 'levelup_gif.gif'}
-
 SPECIAL_ADMIN_ID = 1548490039158251531
 ALLOWED_GUILD_ID = 1503922700408586240
 UNAUTHORIZED_GUILD_MESSAGE = '<a:emoji_44:1541290870966325318> Đây là đâu ?, BirthdayTime mới là nhà của t'
 
 async def leave_unauthorized_guild(guild: discord.Guild):
+    """Báo trong server không được phép rồi tự rời server."""
     if guild.id == ALLOWED_GUILD_ID:
         return
     try:
@@ -541,7 +217,7 @@ def make_embed(*args, **kwargs):
     embed = discord.Embed(*args, **kwargs)
     add_standard_footer(embed)
     return embed
-
+    
 class BirthdayModal(discord.ui.Modal, title='<a:happybirthday:1548593066158465044> Đăng ký Ngày Sinh Nhật'):
     dob_input = discord.ui.TextInput(label='Ngày sinh (DD/MM/YYYY)', placeholder='25/12/2004', required=True, max_length=15)
 
@@ -1119,7 +795,7 @@ async def masoi_command(interaction: discord.Interaction):
                 await interaction.response.send_message(f'<a:failed:1548973085741547580> Không thể tạo phòng Ma Sói.\n`{error_text}`', ephemeral=True)
         except Exception as send_error:
             print(f'[MA SÓI] Không thể gửi lỗi về Discord: {send_error}')
-
+            
 MURDER_ROLE_INFO = {'Murder': ('<:emoji_74:1547988313439215686>', 'Murder', 'Phe Sát Nhân • Mỗi đêm chọn 1 người để giết.'), 'Thám tử': ('<:emoji_71:1547988235127365772>', 'Thám tử', 'Phe Dân • Mỗi đêm điều tra 1 người và nhận manh mối.'), 'Bác sĩ': ('<:emoji_73:1547988300235800606>', 'Bác sĩ', 'Phe Dân • Mỗi đêm chọn 1 người để chữa trị.'), 'Bảo vệ': ('<:protect:1547583282034770000>', 'Bảo vệ', 'Phe Dân • Mỗi đêm bảo vệ 1 người, kể cả chính mình.'), 'Người thường (thất nghiệp)': ('<:villagers:1547581626379403355>', 'Người thường (thất nghiệp)', 'Phe Dân • Vô năng (thất nghiệp), không có kỹ năng ban đêm.')}
 
 MURDER_ROOMS = {}
@@ -1656,8 +1332,10 @@ async def murder_command(interaction: discord.Interaction):
     MURDER_ROOMS[room_id] = {'room_id': room_id, 'guild_id': interaction.guild_id, 'channel_id': interaction.channel_id, 'host': interaction.user.id, 'players': [interaction.user.id], 'roles': {}, 'dead': [], 'actions': {}, 'votes': {}, 'started': False, 'phase': 'lobby', 'round': 0, 'max_players': 15, 'game_finished': False, 'phase_task': None, 'detective_clues': {}, 'detective_morning_reveal': None, 'bomb_target': None, 'bomb_status': None, 'bomb_code': None, 'chat_locked': False, 'voting_open': False}
     room = MURDER_ROOMS[room_id]
     await interaction.response.send_message(embed=murder_lobby_embed(room), view=MurderLobbyView(room_id))
-    # ============================================================
+
+# ============================================================
 # HỆ THỐNG COIN DÙNG CHUNG — LƯU BẰNG JSON
+# Bầu Cua + Ma Sói + Murder + Kéo Bò dùng chung số dư.
 # ============================================================
 COIN_FILE = 'coins.json'
 COIN_DEFAULT = 1000
@@ -1703,9 +1381,9 @@ def baucua_change_coins(user_id: int, amount: int):
     return new_value
 
 BAUCUA_EMOJIS = {
-    'bau': '<:bau:1548524879748272250>',
+    'bau': discord.PartialEmoji(name='bau', id=1548524879748272250),
     'cua': discord.PartialEmoji(name='crab', id=1548515170203209728, animated=True),
-    'tom': '<:tom:1548525583711871067>',
+    'tom': discord.PartialEmoji(name='tom', id=1548525583711871067),
     'ca': discord.PartialEmoji(name='fish', id=1548514999347974164, animated=True),
     'nai': discord.PartialEmoji(name='deer', id=1548514158994259978, animated=True),
     'ga': discord.PartialEmoji(name='rooster', id=1548514657889820762, animated=True),
@@ -1731,7 +1409,7 @@ def game_coin_reward_embed(game_name, winners, reward, winner_label):
 class BauCuaBetModal(discord.ui.Modal, title='Đặt cược Bầu Cua'):
     amount = discord.ui.TextInput(
         label='Số coin muốn đặt',
-        placeholder='Nhập số coin muốn cược...',
+        placeholder='Nhập số coin của mem dùng để cược! (tối đa 250.000)',
         required=True,
         max_length=12,
     )
@@ -1746,49 +1424,26 @@ class BauCuaBetModal(discord.ui.Modal, title='Đặt cược Bầu Cua'):
             amount = int(str(self.amount.value).strip().replace(',', ''))
         except ValueError:
             return await interaction.response.send_message('<a:failed:1548973085741547580> Số coin phải là số nguyên.', ephemeral=True)
-
-        if amount <= 0:
-            return await interaction.response.send_message('<a:failed:1548973085741547580> Số cược phải lớn hơn 0.', ephemeral=True)
-
+        if amount <= 0 or amount > 250000:
+            return await interaction.response.send_message('<a:failed:1548973085741547580> Số cược phải từ **1** đến **250.000 coin**.', ephemeral=True)
         if not baucua_round or not baucua_round.get('open'):
             return await interaction.response.send_message('<a:failed:1548973085741547580> Hiện không có ván Bầu Cua đang mở.', ephemeral=True)
-
         uid = interaction.user.id
         infinite = uid == SPECIAL_ADMIN_ID
         balance = baucua_get_coins(uid)
-        if amount > balance and not infinite:
+        if not infinite and amount > balance:
             return await interaction.response.send_message(f'<a:failed:1548973085741547580> Bạn chỉ có **{balance:,} coin**.', ephemeral=True)
-
         if not infinite:
             baucua_change_coins(uid, -amount)
-
-        baucua_round['bets'].append({
-            'user_id': uid,
-            'mention': interaction.user.mention,
-            'choice': self.choice,
-            'amount': amount,
-            'infinite': infinite,
-        })
+        baucua_round['bets'].append({'user_id': uid, 'mention': interaction.user.mention, 'choice': self.choice, 'amount': amount, 'infinite': infinite})
         remaining = max(0, int(baucua_round.get('remaining', BAUCUA_ROUND_SECONDS)))
-        await interaction.response.send_message(
-            f'<a:verify:1548178353859596320> Đã đặt **{amount:,} coin** vào {BAUCUA_EMOJIS[self.choice]}. Còn **{remaining} giây**.',
-            ephemeral=True,
-        )
+        await interaction.response.send_message(f'<a:verify:1548178353859596320> Đã đặt **{amount:,} coin** vào {BAUCUA_EMOJIS[self.choice]}. Còn **{remaining} giây**.', ephemeral=True)
 
 class BauCuaView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        for key, label, row in [
-            ('nai', 'Nai', 0), ('bau', 'Bầu', 0), ('ga', 'Gà', 0),
-            ('ca', 'Cá', 1), ('cua', 'Cua', 1), ('tom', 'Tôm', 1),
-        ]:
-            button = discord.ui.Button(
-                label=label,
-                emoji=BAUCUA_EMOJIS[key],
-                custom_id=f'baucua_{key}',
-                style=discord.ButtonStyle.secondary,
-                row=row,
-            )
+        for key, label, row in [('nai', 'Nai', 0), ('bau', 'Bầu', 0), ('ga', 'Gà', 0), ('ca', 'Cá', 1), ('cua', 'Cua', 1), ('tom', 'Tôm', 1)]:
+            button = discord.ui.Button(label=label, emoji=BAUCUA_EMOJIS[key], custom_id=f'baucua_{key}', style=discord.ButtonStyle.secondary, row=row)
             button.callback = self._make_callback(key)
             self.add_item(button)
 
@@ -1808,53 +1463,34 @@ async def finish_baucua_round(channel, game_message=None, view=None):
     global baucua_round
     if not baucua_round or not baucua_round.get('open'):
         return
-
     round_data = baucua_round
     round_data['open'] = False
     round_data['remaining'] = 0
-
     result = [random.choice(list(BAUCUA_EMOJIS.keys())) for _ in range(3)]
     winners = []
     losers = []
-
     for bet in round_data['bets']:
         matches = result.count(bet['choice'])
         reward = bet['amount'] * matches
         if not bet['infinite'] and matches:
             baucua_change_coins(bet['user_id'], bet['amount'] + reward)
-
         net = reward if matches else -bet['amount']
         bet_emoji = str(BAUCUA_EMOJIS[bet['choice']])
         if net > 0:
-            winners.append(
-                f"<@{bet['user_id']}> cược {bet_emoji} -> đã lụm `{net:,}` coin"
-            )
+            winners.append(f"<@{bet['user_id']}> đã cược {bet_emoji} -> lụm được **{net:,}** coin")
         else:
-            losers.append(
-                f"<@{bet['user_id']}> cược {bet_emoji} -> tạch `{abs(net):,}` coin"
-            )
-
+            losers.append(f"<@{bet['user_id']}> đã cược {bet_emoji} -> tạch **{abs(net):,}** coin")
     if view is not None:
         view.disable_all()
-
     if game_message is not None:
-        locked_embed = make_embed(
-            title='🦀 Bầu cua • BirthdayTime',
-            description=(
-                'BirthdayTime nhà cái đến từ Châu Phi\n\n'
-                'Bạn đã hết thời gian đặt cược.'
-            ),
-            color=discord.Color.from_rgb(0, 0, 0),
-        )
+        locked_embed = make_embed(title='🦀 Bầu cua • BirthdayTime', description='BirthdayTime nhà cái đến từ Châu Phi\n\nBạn đã hết thời gian đặt cược.', color=discord.Color.from_rgb(0, 0, 0))
         try:
             await game_message.edit(embed=locked_embed, view=view)
         except discord.HTTPException:
             pass
-
     loading_emoji = '<a:loading:1548997886098935848>'
     result_line = [loading_emoji, loading_emoji, loading_emoji]
     result_message = await channel.send('    '.join(result_line))
-
     for index, key in enumerate(result):
         await asyncio.sleep(1)
         result_line[index] = str(BAUCUA_EMOJIS[key])
@@ -1862,7 +1498,6 @@ async def finish_baucua_round(channel, game_message=None, view=None):
             await result_message.edit(content='    '.join(result_line))
         except discord.HTTPException:
             pass
-
     result_lines = ['**Kết quả:**']
     if winners:
         result_lines.extend(winners[:25])
@@ -1870,12 +1505,7 @@ async def finish_baucua_round(channel, game_message=None, view=None):
         result_lines.extend(losers[:25])
     if not round_data['bets']:
         result_lines.append('Không có người đặt cược.')
-
-    result_embed = make_embed(
-        title='🦀 Bầu cua • BirthdayTime',
-        description='\n'.join(result_lines),
-        color=discord.Color.from_rgb(0, 0, 0),
-    )
+    result_embed = make_embed(title='🦀 Bầu cua • BirthdayTime', description='\n'.join(result_lines), color=discord.Color.from_rgb(0, 0, 0))
     await channel.send(embed=result_embed)
     baucua_round = None
 
@@ -1884,36 +1514,21 @@ async def baucua(interaction: discord.Interaction):
     global baucua_round
     if baucua_round and baucua_round.get('open'):
         return await interaction.response.send_message('<a:failed:1548973085741547580> Đang có một ván Bầu Cua diễn ra.', ephemeral=True)
-
     baucua_round = {'open': True, 'bets': [], 'remaining': BAUCUA_ROUND_SECONDS}
     view = BauCuaView()
-    embed = make_embed(
-        title='🦀 Bầu cua • BirthdayTime',
-        description=(
-            'BirthdayTime nhà cái đến từ Châu Phi\n\n'
-            'Đặt cược bằng cách chọn một con\n'
-            'Các mem có 30 giây đặt cược, hãy cẩn trọng trước khi cược!'
-        ),
-        color=discord.Color.from_rgb(0, 0, 0),
-    )
+    embed = make_embed(title='🦀 Bầu cua • BirthdayTime', description='BirthdayTime nhà cái đến từ Châu Phi\n\nĐặt cược bằng cách chọn một con\nCác mem có 30 giây đặt cược, hãy cẩn trọng trước khi cược!', color=discord.Color.from_rgb(0, 0, 0))
     await interaction.response.send_message(embed=embed, view=view)
     game_message = await interaction.original_response()
-
     for remaining in range(BAUCUA_ROUND_SECONDS - 1, 0, -1):
         await asyncio.sleep(1)
         if not baucua_round or not baucua_round.get('open'):
             return
         baucua_round['remaining'] = remaining
-        embed.description = (
-            'BirthdayTime nhà cái đến từ Châu Phi\n\n'
-            'Đặt cược bằng cách chọn một con\n'
-            f'Các mem có {remaining} giây đặt cược, hãy cẩn trọng trước khi cược!'
-        )
+        embed.description = 'BirthdayTime nhà cái đến từ Châu Phi\n\nĐặt cược bằng cách chọn một con\n' + f'Các mem có {remaining} giây đặt cược, hãy cẩn trọng trước khi cược!'
         try:
             await game_message.edit(embed=embed, view=view)
         except discord.HTTPException:
             pass
-
     if baucua_round and baucua_round.get('open'):
         await finish_baucua_round(interaction.channel, game_message, view)
 
@@ -1951,25 +1566,16 @@ class GiveConfirmView(discord.ui.View):
             return await interaction.response.send_message('<a:failed:1548973085741547580> Không thể tự give coin cho chính mình.', ephemeral=True)
         if self.amount <= 0:
             return await interaction.response.send_message('<a:failed:1548973085741547580> Số coin không hợp lệ.', ephemeral=True)
-
         balance = baucua_get_coins(self.ctx.author.id)
         if self.ctx.author.id != SPECIAL_ADMIN_ID and balance < self.amount:
             self.done = True
             self.disable_all()
-            return await interaction.response.edit_message(
-                embed=make_embed(title='<a:failed:1548973085741547580> Give thất bại', description=f'Bạn chỉ còn **{balance:,}** coin.', color=discord.Color.red()),
-                view=self,
-            )
-
+            return await interaction.response.edit_message(embed=make_embed(title='<a:failed:1548973085741547580> Give thất bại', description=f'Bạn chỉ còn **{balance:,}** coin.', color=discord.Color.red()), view=self)
         self.done = True
         if self.ctx.author.id != SPECIAL_ADMIN_ID:
             baucua_change_coins(self.ctx.author.id, -self.amount)
         baucua_change_coins(self.member.id, self.amount)
-        embed = make_embed(
-            title='<a:verify:1548178353859596320> Give coin thành công',
-            description=f'{self.ctx.author.mention} đã give **{self.amount:,}** coin cho {self.member.mention}.',
-            color=discord.Color.from_rgb(0, 0, 0),
-        )
+        embed = make_embed(title='<a:verify:1548178353859596320> Give coin thành công', description=f'{self.ctx.author.mention} đã give **{self.amount:,}** coin cho {self.member.mention}.', color=discord.Color.from_rgb(0, 0, 0))
         embed.add_field(name='Số dư người gửi', value=f'`{coin_display(self.ctx.author.id)}`', inline=True)
         embed.add_field(name='Số dư người nhận', value=f'`{coin_display(self.member.id)}`', inline=True)
         self.disable_all()
@@ -2015,30 +1621,19 @@ class LixiConfirmView(discord.ui.View):
             return await interaction.response.send_message('<a:failed:1548973085741547580> Chỉ người dùng lệnh mới được xác nhận.', ephemeral=True)
         if self.done:
             return await interaction.response.send_message('<a:failed:1548973085741547580> Lì xì này đã được xử lý.', ephemeral=True)
-
         if self.ctx.author.id != SPECIAL_ADMIN_ID:
             balance = baucua_get_coins(self.ctx.author.id)
             total = self.amount * len(self.recipients)
             if balance < total:
                 self.done = True
                 self.disable_all()
-                return await interaction.response.edit_message(
-                    embed=make_embed(title='<a:failed:1548973085741547580> Lì xì thất bại', description=f'Cần **{total:,}** coin nhưng bạn chỉ có **{balance:,}** coin.', color=discord.Color.red()),
-                    view=self,
-                )
-
+                return await interaction.response.edit_message(embed=make_embed(title='<a:failed:1548973085741547580> Lì xì thất bại', description=f'Cần **{total:,}** coin nhưng bạn chỉ có **{balance:,}** coin.', color=discord.Color.red()), view=self)
             baucua_change_coins(self.ctx.author.id, -total)
-
         for member in self.recipients:
             baucua_change_coins(member.id, self.amount)
-
         self.done = True
         self.disable_all()
-        embed = make_embed(
-            title='<a:verify:1548178353859596320> Lì xì thành công',
-            description=f'{self.ctx.author.mention} đã lì xì **{self.amount:,}** coin cho **{len(self.recipients)}** thành viên.',
-            color=discord.Color.from_rgb(0, 0, 0),
-        )
+        embed = make_embed(title='<a:verify:1548178353859596320> Lì xì thành công', description=f'{self.ctx.author.mention} đã lì xì **{self.amount:,}** coin cho **{len(self.recipients)}** thành viên.', color=discord.Color.from_rgb(0, 0, 0))
         embed.add_field(name='Số dư người lì xì', value=f'`{coin_display(self.ctx.author.id)}`', inline=False)
         await interaction.response.edit_message(embed=embed, view=self)
 
@@ -2082,26 +1677,17 @@ class AnXinConfirmView(discord.ui.View):
             return await interaction.response.send_message('<a:failed:1548973085741547580> Chỉ người được ăn xin mới được xác nhận.', ephemeral=True)
         if self.done:
             return await interaction.response.send_message('<a:failed:1548973085741547580> Yêu cầu này đã được xử lý.', ephemeral=True)
-
         balance = baucua_get_coins(self.recipient.id)
         if self.recipient.id != SPECIAL_ADMIN_ID and balance < self.amount:
             self.done = True
             self.disable_all()
-            return await interaction.response.edit_message(
-                embed=make_embed(title='<a:failed:1548973085741547580> Ăn xin thất bại', description=f'{self.recipient.mention} không đủ coin. Số dư: **{balance:,}**.', color=discord.Color.red()),
-                view=self,
-            )
-
+            return await interaction.response.edit_message(embed=make_embed(title='<a:failed:1548973085741547580> Ăn xin thất bại', description=f'{self.recipient.mention} không đủ coin. Số dư: **{balance:,}**.', color=discord.Color.red()), view=self)
         self.done = True
         if self.recipient.id != SPECIAL_ADMIN_ID:
             baucua_change_coins(self.recipient.id, -self.amount)
         baucua_change_coins(self.ctx.author.id, self.amount)
         self.disable_all()
-        embed = make_embed(
-            title='<a:verify:1548178353859596320> Ăn xin thành công',
-            description=f'{self.recipient.mention} đã đồng ý cho {self.ctx.author.mention} **{self.amount:,}** coin.',
-            color=discord.Color.from_rgb(0, 0, 0),
-        )
+        embed = make_embed(title='<a:verify:1548178353859596320> Ăn xin thành công', description=f'{self.recipient.mention} đã đồng ý cho {self.ctx.author.mention} **{self.amount:,}** coin.', color=discord.Color.from_rgb(0, 0, 0))
         await interaction.response.edit_message(embed=embed, view=self)
 
     @discord.ui.button(label='Từ chối', style=discord.ButtonStyle.danger, emoji='<a:failed:1548973085741547580>')
@@ -2117,11 +1703,7 @@ class AnXinConfirmView(discord.ui.View):
 @bot.command(name='coin')
 async def coin_command(ctx):
     balance = coin_display(ctx.author.id)
-    embed = make_embed(
-        title='<a:coin:1548707654459727964>Coin • BirthdayTime',
-        description=f'{ctx.author.mention} đang có **{balance} coin**.',
-        color=discord.Color.from_rgb(0, 0, 0),
-    )
+    embed = make_embed(title='<a:coin:1548707654459727964>Coin • BirthdayTime', description=f'{ctx.author.mention} đang có **{balance} coin**.', color=discord.Color.from_rgb(0, 0, 0))
     await ctx.send(embed=embed)
 
 @bot.command(name='give')
@@ -2136,12 +1718,7 @@ async def give_command(ctx, member: discord.Member = None, amount: int = None):
         return await ctx.send('<a:failed:1548973085741547580> Số coin phải lớn hơn 0.')
     if ctx.author.id != SPECIAL_ADMIN_ID and baucua_get_coins(ctx.author.id) < amount:
         return await ctx.send(f'<a:failed:1548973085741547580> Bạn chỉ có **{baucua_get_coins(ctx.author.id):,}** coin.')
-
-    embed = make_embed(
-        title='<a:coin:1548707654459727964> Xác nhận Give',
-        description=f'{ctx.author.mention} muốn give **{amount:,}** coin cho {member.mention}.\n\nBấm **Đồng ý** hoặc **Hủy**. Yêu cầu hết hạn sau **5 phút**.',
-        color=discord.Color.from_rgb(0, 0, 0),
-    )
+    embed = make_embed(title='<a:coin:1548707654459727964> Xác nhận Give', description=f'{ctx.author.mention} muốn give **{amount:,}** coin cho {member.mention}.\n\nBấm **Đồng ý** hoặc **Hủy**. Yêu cầu hết hạn sau **5 phút**.', color=discord.Color.from_rgb(0, 0, 0))
     view = GiveConfirmView(ctx, member, amount)
     view.message = await ctx.send(embed=embed, view=view)
 
@@ -2151,20 +1728,13 @@ async def lixi_command(ctx, amount: int = None):
         return await ctx.send('<a:failed:1548973085741547580> Dùng: `!lixi số_coin`')
     if amount <= 0:
         return await ctx.send('<a:failed:1548973085741547580> Số coin phải lớn hơn 0.')
-
     recipients = [m for m in ctx.guild.members if not m.bot]
     if not recipients:
         return await ctx.send('<a:failed:1548973085741547580> Không có thành viên hợp lệ để lì xì.')
-
     total = amount * len(recipients)
     if ctx.author.id != SPECIAL_ADMIN_ID and baucua_get_coins(ctx.author.id) < total:
         return await ctx.send(f'<a:failed:1548973085741547580> Lì xì cho **{len(recipients)}** người cần **{total:,}** coin, bạn chỉ có **{baucua_get_coins(ctx.author.id):,}**.')
-
-    embed = make_embed(
-        title='<a:coin:1548707654459727964> Xác nhận Lì Xì',
-        description=f'{ctx.author.mention} muốn lì xì **{amount:,} coin/người** cho **{len(recipients)}** thành viên.\n\nTổng: **{total:,} coin**\n\nBấm **Đồng ý** hoặc **Hủy**. Yêu cầu hết hạn sau **5 phút**.',
-        color=discord.Color.from_rgb(0, 0, 0),
-    )
+    embed = make_embed(title='<a:coin:1548707654459727964> Xác nhận Lì Xì', description=f'{ctx.author.mention} muốn lì xì **{amount:,} coin/người** cho **{len(recipients)}** thành viên.\n\nTổng: **{total:,} coin**\n\nBấm **Đồng ý** hoặc **Hủy**. Yêu cầu hết hạn sau **5 phút**.', color=discord.Color.from_rgb(0, 0, 0))
     view = LixiConfirmView(ctx, amount, recipients)
     view.message = await ctx.send(embed=embed, view=view)
 
@@ -2180,45 +1750,31 @@ async def anxin_command(ctx, member: discord.Member = None, amount: int = None):
         return await ctx.send('<a:failed:1548973085741547580> Số coin phải lớn hơn 0.')
     if member.id != SPECIAL_ADMIN_ID and baucua_get_coins(member.id) < amount:
         return await ctx.send(f'<a:failed:1548973085741547580> {member.mention} hiện không đủ **{amount:,}** coin.')
-
-    embed = make_embed(
-        title='<a:pls:1549015325880619038> Có người đang ăn xin',
-        description=f'{ctx.author.mention} đang xin **{amount:,} coin** từ {member.mention}.\n\n{member.mention} hãy chọn **Đồng ý** hoặc **Từ chối**. Yêu cầu hết hạn sau **5 phút**.',
-        color=discord.Color.from_rgb(0, 0, 0),
-    )
+    embed = make_embed(title='<a:pls:1549015325880619038> Có người đang ăn xin', description=f'{ctx.author.mention} đang xin **{amount:,} coin** từ {member.mention}.\n\n{member.mention} hãy chọn **Đồng ý** hoặc **Từ chối**. Yêu cầu hết hạn sau **5 phút**.', color=discord.Color.from_rgb(0, 0, 0))
     view = AnXinConfirmView(ctx, member, amount)
     view.message = await ctx.send(embed=embed, view=view)
 
 class NhanRoleModal(discord.ui.Modal, title='Nhận Role'):
-    role_id = discord.ui.TextInput(
-        label='ID Role',
-        placeholder='Nhập ID role muốn nhận',
-        required=True,
-        max_length=20,
-    )
+    role_id = discord.ui.TextInput(label='ID Role', placeholder='Nhập ID role muốn nhận', required=True, max_length=20)
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
             role_id = int(str(self.role_id.value).strip())
         except ValueError:
             return await interaction.response.send_message('<a:failed:1548973085741547580> ID Role không hợp lệ.', ephemeral=True)
-
         guild = interaction.guild
         if guild is None:
             return await interaction.response.send_message('<a:failed:1548973085741547580> Lệnh này chỉ dùng trong server.', ephemeral=True)
-
         role = guild.get_role(role_id)
         if role is None:
             return await interaction.response.send_message('<a:failed:1548973085741547580> Không tìm thấy role này.', ephemeral=True)
         if role.is_default():
             return await interaction.response.send_message('<a:failed:1548973085741547580> Không thể nhận role @everyone.', ephemeral=True)
-
         bot_member = guild.me
         if bot_member is None or role >= bot_member.top_role:
             return await interaction.response.send_message(' Bot không thể cấp role này do thứ tự role.', ephemeral=True)
         if role in interaction.user.roles:
             return await interaction.response.send_message(f'ℹ<a:emoji_44:1541290870966325318> Bạn đã có {role.mention}.', ephemeral=True)
-
         try:
             await interaction.user.add_roles(role, reason=f'/nhanrole bởi {interaction.user}')
             await interaction.response.send_message(f'<a:verify:1548178353859596320> Bạn đã nhận {role.mention} thành công!', ephemeral=True)
@@ -2233,214 +1789,106 @@ async def nhanrole(interaction: discord.Interaction):
     await interaction.response.send_modal(NhanRoleModal())
 
 # ============================================================
-# KÉO BÒ
+# HỆ THỐNG KÉO BÒ / BẮT BÒ - DÙNG CHUNG COIN VỚI BẦU CUA
 # ============================================================
-def _tao_file_anh(buf):
-    return discord.File(buf, filename="man_hinh.png")
 
+KEOBO_ROOMS = {}
+KEOBO_COIN_BAT = 1000
+KEOBO_SO_O_MAN_HINH = 10
+
+KEOBO_DANH_SACH_BO = [
+    {"ten": "Bò Thường",    "emoji": "🐄", "gia_tri": 500},
+    {"ten": "Bò Sữa",       "emoji": "🐮", "gia_tri": 800},
+    {"ten": "Bò Mập",       "emoji": "🐂", "gia_tri": 1200},
+    {"ten": "Bò Vàng",      "emoji": "🐃", "gia_tri": 2000},
+    {"ten": "Bò Kim Cương", "emoji": "💎", "gia_tri": 5000},
+]
+
+def keobo_ve_man_hinh(data):
+    o = ["⬜"] * KEOBO_SO_O_MAN_HINH
+    for bo in data.get("bo_hien_tai", []):
+        vi_tri = random.randint(0, KEOBO_SO_O_MAN_HINH - 1)
+        o[vi_tri] = bo["emoji"]
+    return "".join(o)
+
+def keobo_tao_embed(man_hinh, data):
+    tong_bo = len(data.get("bo_hien_tai", []))
+    embed = make_embed(
+        title="🐂 Kéo Bò • BirthdayTime",
+        description=(
+            "**Cách chơi:**\n"
+            f"Bấm nút `Bắt bò` trong những con bò chạy trên màn hình (mỗi lần bắt tốn `{KEOBO_COIN_BAT}` coin)\n"
+            "Bấm nút `Kéo bò` để bò về chuồng (tiền mỗi loại bò khác nhau)\n\n"
+            "**Màn hình kéo bò:**\n"
+            f"```\n{man_hinh}\n```\n"
+            f"**Số bò trên màn hình:** `{tong_bo}`\n"
+            "Hãy hợp lực cùng nhau spam nút kéo bò về chuồng"
+        ),
+        color=discord.Color.from_rgb(139, 69, 19),
+    )
+    return embed
 
 class KeoBoView(discord.ui.View):
-    def __init__(self):
+    def __init__(self, room_id):
         super().__init__(timeout=None)
-        self.vi_tri_bo = random.randint(0, 3)
-        self.da_bat = False
-        self.da_keo = 0
-        self.da_thang = False
-        self.loai_bo_key, self.bo_info = random_bo()
-        self.nguoi_keo = {}
-        self._cap_nhat_nut()
+        self.room_id = room_id
 
-    def _cap_nhat_nut(self):
-        self.clear_items()
-        if self.da_thang:
-            nut = discord.ui.Button(label="Chơi Lại", emoji="🔄", style=discord.ButtonStyle.success)
-            nut.callback = self._callback_choi_lai
-            self.add_item(nut)
-            return
-        if not self.da_bat:
-            nut = discord.ui.Button(label="Bắt Bò", emoji="🪢", style=discord.ButtonStyle.success)
-            nut.callback = self._callback_bat_bo
-            self.add_item(nut)
-        else:
-            nut_keo = discord.ui.Button(label="Kéo", emoji="💪", style=discord.ButtonStyle.primary)
-            nut_keo.callback = self._callback_keo
-            self.add_item(nut_keo)
+    @discord.ui.button(label="Kéo Bò", emoji="🐂", style=discord.ButtonStyle.success, custom_id="nut_keo_bo_global")
+    async def nut_keo(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = KEOBO_ROOMS.get(self.room_id)
+        if not data:
+            return await interaction.response.send_message("<a:failed:1548973085741547580> Phòng kéo bò không tồn tại. Dùng `/keobo` để mở lại.", ephemeral=True)
+        if not data.get("bo_hien_tai"):
+            return await interaction.response.send_message("<a:failed:1548973085741547580> Không có bò để kéo. Bấm `Bắt Bò` trước.", ephemeral=True)
+        bo = data["bo_hien_tai"].pop(0)
+        baucua_change_coins(interaction.user.id, bo["gia_tri"])
+        man_hinh = keobo_ve_man_hinh(data)
+        embed = keobo_tao_embed(man_hinh, data)
+        await interaction.response.send_message(f"<a:verify:1548178353859596320> {interaction.user.mention} ĐÃ KÉO `{bo['ten']}` VỀ CHUỒNG (+{bo['gia_tri']:,} coin)", ephemeral=False)
+        try:
+            await interaction.message.edit(embed=embed, view=self)
+        except discord.HTTPException:
+            pass
 
-            nut_tha = discord.ui.Button(label="Thả Bò", emoji="💨", style=discord.ButtonStyle.danger)
-            nut_tha.callback = self._callback_tha
-            self.add_item(nut_tha)
+    @discord.ui.button(label="Bắt Bò", emoji="🤠", style=discord.ButtonStyle.danger, custom_id="nut_bat_bo_global")
+    async def nut_bat(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = KEOBO_ROOMS.get(self.room_id)
+        if not data:
+            return await interaction.response.send_message("<a:failed:1548973085741547580> Phòng kéo bò không tồn tại. Dùng `/keobo` để mở lại.", ephemeral=True)
+        if interaction.user.id != SPECIAL_ADMIN_ID:
+            balance = baucua_get_coins(interaction.user.id)
+            if balance < KEOBO_COIN_BAT:
+                return await interaction.response.send_message(f"<a:failed:1548973085741547580> Không đủ coin. Cần `{KEOBO_COIN_BAT:,}` coin. Hiện có `{balance:,}`.", ephemeral=True)
+            baucua_change_coins(interaction.user.id, -KEOBO_COIN_BAT)
+        bo_moi = random.choice(KEOBO_DANH_SACH_BO)
+        data.setdefault("bo_hien_tai", []).append(bo_moi)
+        man_hinh = keobo_ve_man_hinh(data)
+        embed = keobo_tao_embed(man_hinh, data)
+        await interaction.response.send_message(f"<a:verify:1548178353859596320> {interaction.user.mention} ĐÃ BẮT `{bo_moi['ten']}` (-{KEOBO_COIN_BAT:,} coin)", ephemeral=False)
+        try:
+            await interaction.message.edit(embed=embed, view=self)
+        except discord.HTTPException:
+            pass
 
-    def _tao_embed(self, nguoi_choi: discord.Member):
-        ten_list = [v["ten"] for v in self.nguoi_keo.values()]
-        buf = ve_man_hinh(
-            self.vi_tri_bo, self.da_bat, self.da_keo,
-            nguoi_choi.display_name, self.loai_bo_key, ten_list
-        )
-        file = _tao_file_anh(buf)
-        bo = self.bo_info
+@bot.tree.command(name="keobo", description="Mở bảng kéo bò")
+async def keobo_command(interaction: discord.Interaction):
+    if interaction.guild is None:
+        return await interaction.response.send_message("<a:failed:1548973085741547580> Lệnh `/keobo` chỉ dùng trong server.", ephemeral=True)
+    room_id = f"keobo_{interaction.guild_id}_{interaction.channel_id}"
+    KEOBO_ROOMS[room_id] = {
+        "guild_id": interaction.guild_id,
+        "channel_id": interaction.channel_id,
+        "host": interaction.user.id,
+        "bo_hien_tai": [],
+    }
+    data = KEOBO_ROOMS[room_id]
+    man_hinh = keobo_ve_man_hinh(data)
+    embed = keobo_tao_embed(man_hinh, data)
+    view = KeoBoView(room_id)
+    await interaction.response.send_message(embed=embed, view=view)
 
-        if self.da_thang:
-            color = discord.Color.gold()
-            trang_thai = "🏆 **BÒ ĐÃ VỀ ĐÍCH!**"
-            huong_dan = "🎉 Cả team đã kéo bò về quầy thu ngân!"
-        elif self.da_bat:
-            color = discord.Color.green()
-            trang_thai = "🪢 **ĐÃ BUỘC DÂY VÀO BÒ**"
-            huong_dan = "👉 Mọi người cùng bấm **KÉO** để kéo bò về đích!"
-        else:
-            color = discord.Color.blurple()
-            trang_thai = f"{bo['emoji']} **{bo['ten'].upper()} ĐANG CHẠY!**"
-            huong_dan = "👉 Bấm **BẮT BÒ** để buộc dây vào nó!"
-
-        embed = make_embed(
-            title="🐂 KÉO BÒ SIÊU THỊ • BirthdayTime",
-            description=(
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🏪 **SƠ ĐỒ SIÊU THỊ** 🏪\n"
-                f"┣ {trang_thai}\n"
-                f"┗ {huong_dan}\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            ),
-            color=color
-        )
-
-        embed.add_field(name="📍 Tiến độ", value=f"`{self.da_keo}/{DO_DAI_DUONG}` điểm", inline=True)
-        embed.add_field(name="🐄 Loại bò", value=f"{bo['emoji']} {bo['ten']}", inline=True)
-        embed.add_field(name="⚡ Hệ số", value=f"x{bo['he_so_diem']}", inline=True)
-        embed.add_field(name="🪢 Dây", value="✅ Đã buộc" if self.da_bat else "❌ Chưa buộc", inline=True)
-        embed.add_field(name="👥 Số người kéo", value=f"`{len(self.nguoi_keo)}`", inline=True)
-        embed.add_field(name="💰 Coin/lượt", value=f"`{COIN_MOI_LUOT * bo['he_so_diem']:,}`", inline=True)
-
-        if self.nguoi_keo:
-            top = sorted(self.nguoi_keo.items(), key=lambda x: -x[1]["diem"])[:5]
-            huy = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
-            text = "\n".join(f"{huy[i]} **{d['ten']}** — `{d['diem']}` điểm" for i, (_, d) in enumerate(top))
-            embed.add_field(name="🏆 Top kéo ván này", value=text, inline=False)
-
-        embed.set_image(url="attachment://man_hinh.png")
-        embed.set_footer(text=f"🐂 {bo['mo_ta']} • by w.dec")
-        return embed, file
-
-    async def _callback_bat_bo(self, interaction: discord.Interaction):
-        if self.da_bat or self.da_thang:
-            return await interaction.response.send_message("⚠️ Không thể bắt bò lúc này!", ephemeral=True)
-        self.da_bat = True
-        self._cap_nhat_nut()
-        embed, file = self._tao_embed(interaction.user)
-        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
-
-    async def _callback_keo(self, interaction: discord.Interaction):
-        if not self.da_bat:
-            return await interaction.response.send_message("🪢 Bắt bò trước đã!", ephemeral=True)
-        if self.da_thang:
-            return await interaction.response.send_message("🏆 Game đã kết thúc!", ephemeral=True)
-
-        user = interaction.user
-        bo = self.bo_info
-        coin_can = COIN_MOI_LUOT * bo["he_so_diem"]
-
-        # Kiểm tra coin bằng hệ thống coin chung của bot
-        if user.id != SPECIAL_ADMIN_ID and baucua_get_coins(user.id) < coin_can:
-            return await interaction.response.send_message(
-                f"❌ Không đủ coin! Cần `{coin_can:,}` coin, bạn có `{baucua_get_coins(user.id):,}` coin.",
-                ephemeral=True
-            )
-
-        # Trừ coin
-        if user.id != SPECIAL_ADMIN_ID:
-            baucua_change_coins(user.id, -coin_can)
-
-        diem = 1 * bo["he_so_diem"]
-
-        # Bò điên: 25% tuột dây
-        if self.loai_bo_key == "bo_dien" and random.random() < 0.25:
-            return await interaction.response.send_message(
-                "💥 **Bò điên giãy mạnh!** Bạn tuột dây, mất lượt kéo này!",
-                ephemeral=True
-            )
-
-        # Bò sữa: 20% hoàn coin
-        if self.loai_bo_key == "bo_sua" and random.random() < 0.20:
-            baucua_change_coins(user.id, coin_can)
-            await interaction.response.send_message(
-                f"🐄 **Bò sữa cho sữa!** Bạn được hoàn lại `{coin_can:,}` coin!",
-                ephemeral=True
-            )
-
-        # Cộng điểm
-        self.da_keo += diem
-        self.vi_tri_bo = min(self.vi_tri_bo + diem, SO_O - 1)
-
-        if user.id not in self.nguoi_keo:
-            self.nguoi_keo[user.id] = {"ten": user.display_name, "diem": 0}
-        self.nguoi_keo[user.id]["diem"] += diem
-
-        # Lưu stats tổng
-        stats = KEOBO_STATS.setdefault(user.id, {"ten": user.display_name, "tong_diem": 0, "thang": 0})
-        stats["tong_diem"] += diem
-        stats["ten"] = user.display_name
-
-        # Kiểm tra thắng
-        if self.da_keo >= DO_DAI_DUONG:
-            self.da_thang = True
-            self.da_bat = False
-            top = sorted(self.nguoi_keo.items(), key=lambda x: -x[1]["diem"])[:3]
-            thuong = [5000, 3000, 1000]
-            for i, (uid, _) in enumerate(top):
-                baucua_change_coins(uid, thuong[i])
-                KEOBO_STATS.setdefault(uid, {"ten": "", "tong_diem": 0, "thang": 0})
-                KEOBO_STATS[uid]["thang"] += 1
-            self._cap_nhat_nut()
-
-        embed, file = self._tao_embed(interaction.user)
-        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
-
-    async def _callback_tha(self, interaction: discord.Interaction):
-        self.da_bat = False
-        self.vi_tri_bo = random.randint(0, 3)
-        self.da_keo = 0
-        self._cap_nhat_nut()
-        embed, file = self._tao_embed(interaction.user)
-        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
-
-    async def _callback_choi_lai(self, interaction: discord.Interaction):
-        self.vi_tri_bo = random.randint(0, 3)
-        self.da_bat = False
-        self.da_keo = 0
-        self.da_thang = False
-        self.loai_bo_key, self.bo_info = random_bo()
-        self.nguoi_keo = {}
-        self._cap_nhat_nut()
-        embed, file = self._tao_embed(interaction.user)
-        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
-
-
-@bot.tree.command(name="keobo", description="Cùng nhau kéo bò trong siêu thị!")
-async def keobo(interaction: discord.Interaction):
-    view = KeoBoView()
-    embed, file = view._tao_embed(interaction.user)
-    await interaction.response.send_message(embed=embed, file=file, view=view)
-
-
-@bot.tree.command(name="topkeobo", description="Bảng xếp hạng kéo bò")
-async def topkeobo(interaction: discord.Interaction):
-    if not KEOBO_STATS:
-        return await interaction.response.send_message("📭 Chưa có ai chơi kéo bò!", ephemeral=True)
-
-    top = sorted(KEOBO_STATS.items(), key=lambda x: -x[1]["tong_diem"])[:10]
-    huy = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
-    text = "\n".join(
-        f"{huy[i]} **{d['ten']}** — `{d['tong_diem']:,}` điểm | `{d['thang']}` lần thắng"
-        for i, (_, d) in enumerate(top)
-    )
-    embed = make_embed(
-        title="🏆 BẢNG XẾP HẠNG KÉO BÒ",
-        description=text,
-        color=discord.Color.gold()
-    )
-    await interaction.response.send_message(embed=embed)
-
-BOT_TOKEN = os.getenv("DISCORD_TOKEN")
-if __name__ == "__main__":
-    if BOT_TOKEN:
-        bot.run(BOT_TOKEN)
+# ============================================================
+# KHỞI ĐỘNG BOT
+# ============================================================
+if __name__ == '__main__':
+    bot.run('YOUR_DISCORD_BOT_TOKEN')
