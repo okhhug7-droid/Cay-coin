@@ -2233,293 +2233,212 @@ async def nhanrole(interaction: discord.Interaction):
     await interaction.response.send_modal(NhanRoleModal())
 
 # ============================================================
-# QUEST SYSTEM
+# KÉO BÒ
 # ============================================================
-ORB_CONFIG_FILE = 'quest_config.json'
-ORB_SEEN_FILE = 'quest_seen.json'
-PUBLIC_QUEST_API = 'https://api.discordquest.com/api/quests'
-QUEST_POLL_SECONDS = 60
+def _tao_file_anh(buf):
+    return discord.File(buf, filename="man_hinh.png")
 
-def _load_quest_config():
-    if os.path.exists(ORB_CONFIG_FILE):
-        try:
-            with open(ORB_CONFIG_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
 
-def _save_quest_config(data):
-    with open(ORB_CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-
-_quest_config = _load_quest_config()
-ORB_CHANNEL_ID = _quest_config.get('quest_channel_id')
-
-def _load_seen_quests():
-    if os.path.exists(ORB_SEEN_FILE):
-        try:
-            with open(ORB_SEEN_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return set((str(x) for x in data)) if isinstance(data, list) else set()
-        except (json.JSONDecodeError, OSError):
-            pass
-    return set()
-
-def _save_seen_quests(seen):
-    values = list(seen)[-1000:]
-    with open(ORB_SEEN_FILE, 'w', encoding='utf-8') as f:
-        json.dump(values, f, ensure_ascii=False, indent=2)
-
-SEEN_QUEST_IDS = _load_seen_quests()
-QUEST_SCANNER_STARTED = False
-QUEST_SCAN_LOCK = asyncio.Lock()
-
-class QuestView(discord.ui.View):
-    def __init__(self, quest_url: str):
+class KeoBoView(discord.ui.View):
+    def __init__(self):
         super().__init__(timeout=None)
-        if quest_url:
-            self.add_item(discord.ui.Button(label='View Quest', style=discord.ButtonStyle.link, emoji='🔗', url=quest_url))
+        self.vi_tri_bo = random.randint(0, 3)
+        self.da_bat = False
+        self.da_keo = 0
+        self.da_thang = False
+        self.loai_bo_key, self.bo_info = random_bo()
+        self.nguoi_keo = {}
+        self._cap_nhat_nut()
 
-def tao_quest_embed(ten_nhiem_vu: str, mo_ta: str, reward: str, quest_id: str, thoi_gian_ket_thuc: str):
-    embed = discord.Embed(
-        title='<a:quest:1548628005012906047> Nhiệm vụ mới nè các mem!',
-        description=f'**Tên Quest:** {ten_nhiem_vu}\n\n{mo_ta}',
-        color=5793266
-    )
-    embed.add_field(
-        name='<a:orb:1548623915121770577> Reward',
-        value=f'`{reward}`',
-        inline=False
-    )
-    embed.add_field(
-        name='<a:thongbao:1548169803540201582> Ends',
-        value=thoi_gian_ket_thuc,
-        inline=False
-    )
-    embed.add_field(
-        name='<a:lightningbolt:1508330216181731441> Quest ID',
-        value=f'`{quest_id}`',
-        inline=False
-    )
-    return embed
-
-async def thong_bao_orb(ten_nhiem_vu: str, mo_ta: str, reward: str='Orb', quest_id: str='Chưa có', thoi_gian_ket_thuc: str='Chưa có', quest_url: str | None=None):
-    channel = bot.get_channel(ORB_CHANNEL_ID)
-    if channel is None:
-        print('Chưa setup kênh Quest hoặc không tìm thấy kênh.')
-        return False
-    if not ten_nhiem_vu or str(ten_nhiem_vu).startswith('Quest #'):
-        return False
-    embed = tao_quest_embed(ten_nhiem_vu, mo_ta, reward, quest_id, thoi_gian_ket_thuc)
-    try:
-        if quest_url:
-            await channel.send(embed=embed, view=QuestView(quest_url))
+    def _cap_nhat_nut(self):
+        self.clear_items()
+        if self.da_thang:
+            nut = discord.ui.Button(label="Chơi Lại", emoji="🔄", style=discord.ButtonStyle.success)
+            nut.callback = self._callback_choi_lai
+            self.add_item(nut)
+            return
+        if not self.da_bat:
+            nut = discord.ui.Button(label="Bắt Bò", emoji="🪢", style=discord.ButtonStyle.success)
+            nut.callback = self._callback_bat_bo
+            self.add_item(nut)
         else:
-            await channel.send(embed=embed)
-        return True
-    except Exception as e:
-        print(f'[Quest] Không gửi được thông báo: {e}')
-        return False
+            nut_keo = discord.ui.Button(label="Kéo", emoji="💪", style=discord.ButtonStyle.primary)
+            nut_keo.callback = self._callback_keo
+            self.add_item(nut_keo)
 
-def _parse_quest_time(value):
-    if not value:
-        return None
-    if isinstance(value, (int, float)):
-        try:
-            return datetime.datetime.fromtimestamp(value, tz=datetime.timezone.utc)
-        except Exception:
-            return None
-    text = str(value).strip()
-    try:
-        return datetime.datetime.fromisoformat(text.replace('Z', '+00:00'))
-    except Exception:
-        return None
+            nut_tha = discord.ui.Button(label="Thả Bò", emoji="💨", style=discord.ButtonStyle.danger)
+            nut_tha.callback = self._callback_tha
+            self.add_item(nut_tha)
 
-def _quest_is_active(q):
-    if not isinstance(q, dict):
-        return False
-    now = datetime.datetime.now(datetime.timezone.utc)
-    status = str(_first_value(q, 'status', 'state', default='')).lower()
-    if status in {'ended', 'expired', 'inactive', 'completed', 'disabled', 'closed'}:
-        return False
-    starts = _first_value(q, 'starts_at', 'startsAt', 'start_at', 'startAt', 'starts')
-    ends = _first_value(q, 'expires_at', 'expiresAt', 'end_at', 'endAt', 'ends_at', 'endsAt', 'expiration', 'expiration_date', 'expirationDate')
-    start_dt = _parse_quest_time(starts)
-    end_dt = _parse_quest_time(ends)
-    if start_dt is not None:
-        if start_dt.tzinfo is None:
-            start_dt = start_dt.replace(tzinfo=datetime.timezone.utc)
-        if now < start_dt:
-            return False
-    if end_dt is not None:
-        if end_dt.tzinfo is None:
-            end_dt = end_dt.replace(tzinfo=datetime.timezone.utc)
-        if now >= end_dt:
-            return False
-    return True
+    def _tao_embed(self, nguoi_choi: discord.Member):
+        ten_list = [v["ten"] for v in self.nguoi_keo.values()]
+        buf = ve_man_hinh(
+            self.vi_tri_bo, self.da_bat, self.da_keo,
+            nguoi_choi.display_name, self.loai_bo_key, ten_list
+        )
+        file = _tao_file_anh(buf)
+        bo = self.bo_info
 
-def _first_value(data, *keys, default=None):
-    if not isinstance(data, dict):
-        return default
-    for key in keys:
-        value = data.get(key)
-        if value not in (None, '', []):
-            return value
-    return default
+        if self.da_thang:
+            color = discord.Color.gold()
+            trang_thai = "🏆 **BÒ ĐÃ VỀ ĐÍCH!**"
+            huong_dan = "🎉 Cả team đã kéo bò về quầy thu ngân!"
+        elif self.da_bat:
+            color = discord.Color.green()
+            trang_thai = "🪢 **ĐÃ BUỘC DÂY VÀO BÒ**"
+            huong_dan = "👉 Mọi người cùng bấm **KÉO** để kéo bò về đích!"
+        else:
+            color = discord.Color.blurple()
+            trang_thai = f"{bo['emoji']} **{bo['ten'].upper()} ĐANG CHẠY!**"
+            huong_dan = "👉 Bấm **BẮT BÒ** để buộc dây vào nó!"
 
-def _quest_list_from_public_data(data):
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        for key in ('quests', 'items', 'data', 'results'):
-            value = data.get(key)
-            if isinstance(value, list):
-                return value
-    return []
+        embed = make_embed(
+            title="🐂 KÉO BÒ SIÊU THỊ • BirthdayTime",
+            description=(
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🏪 **SƠ ĐỒ SIÊU THỊ** 🏪\n"
+                f"┣ {trang_thai}\n"
+                f"┗ {huong_dan}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            ),
+            color=color
+        )
 
-def _normalize_public_quest(q):
-    if not isinstance(q, dict) or not _quest_is_active(q):
-        return None
-    qid = _first_value(q, 'id', 'quest_id', 'questId')
-    if qid is None:
-        return None
-    title = _first_value(q, 'title', 'name', 'quest_name', 'questName', 'game_title', 'gameTitle')
-    if not title:
-        return None
-    description = _first_value(q, 'description', 'desc', 'details', 'message', default='Hoàn thành nhiệm vụ để nhận phần thưởng.')
-    reward = _first_value(q, 'reward', 'rewards', 'reward_text', 'rewardText', default='Orb')
-    if isinstance(reward, dict):
-        amount = _first_value(reward, 'amount', 'value', 'quantity', 'orb_quantity', 'orbQuantity')
-        kind = _first_value(reward, 'name', 'currency', 'type', default='Orb')
-        reward = f'{amount} {kind}' if amount is not None else str(kind)
-    elif isinstance(reward, list):
-        reward = ' | '.join(str(x) for x in reward[:5]) or 'Orb'
-    end_at = _first_value(q, 'expires_at', 'expiresAt', 'end_at', 'endAt', 'ends_at', 'endsAt', 'expiration', 'expiration_date', 'expirationDate', default='Chưa có')
-    quest_url = _first_value(q, 'url', 'quest_url', 'questUrl', 'link', 'deep_link', 'deepLink', default='https://discord.com/quest-home')
-    return {'id': str(qid), 'name': str(title), 'description': str(description), 'reward': str(reward), 'ends': str(end_at), 'url': str(quest_url)}
+        embed.add_field(name="📍 Tiến độ", value=f"`{self.da_keo}/{DO_DAI_DUONG}` điểm", inline=True)
+        embed.add_field(name="🐄 Loại bò", value=f"{bo['emoji']} {bo['ten']}", inline=True)
+        embed.add_field(name="⚡ Hệ số", value=f"x{bo['he_so_diem']}", inline=True)
+        embed.add_field(name="🪢 Dây", value="✅ Đã buộc" if self.da_bat else "❌ Chưa buộc", inline=True)
+        embed.add_field(name="👥 Số người kéo", value=f"`{len(self.nguoi_keo)}`", inline=True)
+        embed.add_field(name="💰 Coin/lượt", value=f"`{COIN_MOI_LUOT * bo['he_so_diem']:,}`", inline=True)
 
-async def _fetch_public_quests():
-    def _request():
-        req = urllib.request.Request(PUBLIC_QUEST_API, headers={'User-Agent': 'DiscordQuestNotifier/1.0', 'Accept': 'application/json'})
-        with urllib.request.urlopen(req, timeout=15) as response:
-            if response.status != 200:
-                raise RuntimeError(f'HTTP {response.status}')
-            return json.loads(response.read().decode('utf-8'))
-    try:
-        data = await asyncio.to_thread(_request)
-        normalized = []
-        for q in _quest_list_from_public_data(data):
-            item = _normalize_public_quest(q)
-            if item:
-                normalized.append(item)
-        return normalized
-    except Exception as e:
-        print(f'[Quest] Không lấy được public Quest API: {e}')
-        return []
+        if self.nguoi_keo:
+            top = sorted(self.nguoi_keo.items(), key=lambda x: -x[1]["diem"])[:5]
+            huy = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+            text = "\n".join(f"{huy[i]} **{d['ten']}** — `{d['diem']}` điểm" for i, (_, d) in enumerate(top))
+            embed.add_field(name="🏆 Top kéo ván này", value=text, inline=False)
 
-async def scan_public_quests(notify_new=True):
-    global SEEN_QUEST_IDS
-    async with QUEST_SCAN_LOCK:
-        quests = await _fetch_public_quests()
-        if not quests:
-            return 0
+        embed.set_image(url="attachment://man_hinh.png")
+        embed.set_footer(text=f"🐂 {bo['mo_ta']} • by w.dec")
+        return embed, file
 
-        if not SEEN_QUEST_IDS:
-            SEEN_QUEST_IDS.update(q['id'] for q in quests)
-            _save_seen_quests(SEEN_QUEST_IDS)
-            print(f'[Quest] Đã tạo baseline {len(quests)} Quest, không gửi thông báo.')
-            return 0
+    async def _callback_bat_bo(self, interaction: discord.Interaction):
+        if self.da_bat or self.da_thang:
+            return await interaction.response.send_message("⚠️ Không thể bắt bò lúc này!", ephemeral=True)
+        self.da_bat = True
+        self._cap_nhat_nut()
+        embed, file = self._tao_embed(interaction.user)
+        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
 
-        new_quests = []
-        batch_ids = set()
-        for q in quests:
-            qid = str(q['id'])
-            if qid not in SEEN_QUEST_IDS and qid not in batch_ids:
-                batch_ids.add(qid)
-                new_quests.append(q)
+    async def _callback_keo(self, interaction: discord.Interaction):
+        if not self.da_bat:
+            return await interaction.response.send_message("🪢 Bắt bò trước đã!", ephemeral=True)
+        if self.da_thang:
+            return await interaction.response.send_message("🏆 Game đã kết thúc!", ephemeral=True)
 
-        sent_count = 0
-        for q in new_quests:
-            if notify_new:
-                sent = await thong_bao_orb(
-                    ten_nhiem_vu=q['name'],
-                    mo_ta=q['description'],
-                    reward=q['reward'],
-                    quest_id=q['id'],
-                    thoi_gian_ket_thuc=q['ends'],
-                    quest_url=q['url']
-                )
-                if sent:
-                    SEEN_QUEST_IDS.add(str(q['id']))
-                    sent_count += 1
-            else:
-                SEEN_QUEST_IDS.add(str(q['id']))
+        user = interaction.user
+        bo = self.bo_info
+        coin_can = COIN_MOI_LUOT * bo["he_so_diem"]
 
-        if new_quests:
-            _save_seen_quests(SEEN_QUEST_IDS)
-            print(f'[Quest] Phát hiện {len(new_quests)} Quest mới, đã thông báo {sent_count}.')
-        return len(new_quests)
+        # Kiểm tra coin bằng hệ thống coin chung của bot
+        if user.id != SPECIAL_ADMIN_ID and baucua_get_coins(user.id) < coin_can:
+            return await interaction.response.send_message(
+                f"❌ Không đủ coin! Cần `{coin_can:,}` coin, bạn có `{baucua_get_coins(user.id):,}` coin.",
+                ephemeral=True
+            )
 
-@tasks.loop(seconds=QUEST_POLL_SECONDS)
-async def quest_auto_scanner():
-    await scan_public_quests(notify_new=True)
+        # Trừ coin
+        if user.id != SPECIAL_ADMIN_ID:
+            baucua_change_coins(user.id, -coin_can)
 
-@quest_auto_scanner.before_loop
-async def quest_auto_scanner_before_loop():
-    await bot.wait_until_ready()
+        diem = 1 * bo["he_so_diem"]
 
-@bot.tree.command(name='setuporb', description='Cài kênh nhận thông báo Quest')
-@discord.app_commands.checks.has_permissions(administrator=True)
-async def setup_quest(interaction: discord.Interaction):
-    global ORB_CHANNEL_ID
-    ORB_CHANNEL_ID = interaction.channel_id
-    _quest_config['quest_channel_id'] = ORB_CHANNEL_ID
-    _save_quest_config(_quest_config)
-    channel = interaction.channel
-    channel_mention = channel.mention if channel else f'<#{ORB_CHANNEL_ID}>'
-    await interaction.response.send_message(f'<a:verify:1548178353859596320> Đã setup kênh Quest: {channel_mention}', ephemeral=True)
+        # Bò điên: 25% tuột dây
+        if self.loai_bo_key == "bo_dien" and random.random() < 0.25:
+            return await interaction.response.send_message(
+                "💥 **Bò điên giãy mạnh!** Bạn tuột dây, mất lượt kéo này!",
+                ephemeral=True
+            )
 
-@bot.tree.command(name='scanorb', description='Quét Quest mới ngay lập tức')
-@discord.app_commands.checks.has_permissions(administrator=True)
-async def scan_orb(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    count = await scan_public_quests(notify_new=True)
-    await interaction.followup.send(f'<:__:1506650257272868865> Đã quét Quest. Phát hiện **{count}** Quest mới.', ephemeral=True)
+        # Bò sữa: 20% hoàn coin
+        if self.loai_bo_key == "bo_sua" and random.random() < 0.20:
+            baucua_change_coins(user.id, coin_can)
+            await interaction.response.send_message(
+                f"🐄 **Bò sữa cho sữa!** Bạn được hoàn lại `{coin_can:,}` coin!",
+                ephemeral=True
+            )
 
-# ============================================================
-# EVENT
-# ============================================================
-@bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot:
-        return
+        # Cộng điểm
+        self.da_keo += diem
+        self.vi_tri_bo = min(self.vi_tri_bo + diem, SO_O - 1)
 
-    if message.guild is not None and message.guild.id != ALLOWED_GUILD_ID:
-        await leave_unauthorized_guild(message.guild)
-        return
+        if user.id not in self.nguoi_keo:
+            self.nguoi_keo[user.id] = {"ten": user.display_name, "diem": 0}
+        self.nguoi_keo[user.id]["diem"] += diem
 
-    await bot.process_commands(message)
+        # Lưu stats tổng
+        stats = KEOBO_STATS.setdefault(user.id, {"ten": user.display_name, "tong_diem": 0, "thang": 0})
+        stats["tong_diem"] += diem
+        stats["ten"] = user.display_name
 
-@bot.event
-async def on_ready():
-    print(f"🤖 Bot đã đăng nhập: {bot.user}")
-    bot.add_view(BoostView())
-    try:
-        if not check_birthdays.is_running():
-            check_birthdays.start()
-    except Exception as e:
-        print(f"⚠️ Không khởi động được Birthday: {e}")
-    try:
-        if not quest_auto_scanner.is_running():
-            quest_auto_scanner.start()
-    except Exception as e:
-        print(f"⚠️ Không khởi động được Orb scanner: {e}")
-    try:
-        synced = await bot.tree.sync()
-        print(f"✨ Đã sync {len(synced)} lệnh slash.")
-    except Exception as e:
-        print(f"⚠️ Lỗi sync slash: {e}")
+        # Kiểm tra thắng
+        if self.da_keo >= DO_DAI_DUONG:
+            self.da_thang = True
+            self.da_bat = False
+            top = sorted(self.nguoi_keo.items(), key=lambda x: -x[1]["diem"])[:3]
+            thuong = [5000, 3000, 1000]
+            for i, (uid, _) in enumerate(top):
+                baucua_change_coins(uid, thuong[i])
+                KEOBO_STATS.setdefault(uid, {"ten": "", "tong_diem": 0, "thang": 0})
+                KEOBO_STATS[uid]["thang"] += 1
+            self._cap_nhat_nut()
+
+        embed, file = self._tao_embed(interaction.user)
+        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+
+    async def _callback_tha(self, interaction: discord.Interaction):
+        self.da_bat = False
+        self.vi_tri_bo = random.randint(0, 3)
+        self.da_keo = 0
+        self._cap_nhat_nut()
+        embed, file = self._tao_embed(interaction.user)
+        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+
+    async def _callback_choi_lai(self, interaction: discord.Interaction):
+        self.vi_tri_bo = random.randint(0, 3)
+        self.da_bat = False
+        self.da_keo = 0
+        self.da_thang = False
+        self.loai_bo_key, self.bo_info = random_bo()
+        self.nguoi_keo = {}
+        self._cap_nhat_nut()
+        embed, file = self._tao_embed(interaction.user)
+        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+
+
+@bot.tree.command(name="keobo", description="Cùng nhau kéo bò trong siêu thị!")
+async def keobo(interaction: discord.Interaction):
+    view = KeoBoView()
+    embed, file = view._tao_embed(interaction.user)
+    await interaction.response.send_message(embed=embed, file=file, view=view)
+
+
+@bot.tree.command(name="topkeobo", description="Bảng xếp hạng kéo bò")
+async def topkeobo(interaction: discord.Interaction):
+    if not KEOBO_STATS:
+        return await interaction.response.send_message("📭 Chưa có ai chơi kéo bò!", ephemeral=True)
+
+    top = sorted(KEOBO_STATS.items(), key=lambda x: -x[1]["tong_diem"])[:10]
+    huy = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    text = "\n".join(
+        f"{huy[i]} **{d['ten']}** — `{d['tong_diem']:,}` điểm | `{d['thang']}` lần thắng"
+        for i, (_, d) in enumerate(top)
+    )
+    embed = make_embed(
+        title="🏆 BẢNG XẾP HẠNG KÉO BÒ",
+        description=text,
+        color=discord.Color.gold()
+    )
+    await interaction.response.send_message(embed=embed)
 
 BOT_TOKEN = os.getenv("DISCORD_TOKEN")
 if __name__ == "__main__":
