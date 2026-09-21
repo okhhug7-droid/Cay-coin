@@ -1,14 +1,15 @@
-# Bot Discord slash command /spam - chỉ spam kênh mà token đã vào sẵn
+# Bot Discord slash command /spam - spam mỗi 30 giây một lần
 # Yêu cầu: discord.py 2.0+, aiohttp, faker
 # Cài đặt: pip install discord.py aiohttp faker
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import aiohttp
 import asyncio
 import random
 import os
+import time
 from faker import Faker
 
 fake = Faker()
@@ -16,14 +17,19 @@ fake = Faker()
 # Cấu hình
 TOKEN_BOT = os.getenv("TOKEN_BOT")
 GUILD_ID = os.getenv("GUILD_ID")  # Tùy chọn
+CHU_KY_SPAM = 30  # Giây, spam mỗi 30 giây
 
 # Khởi tạo bot
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
+# Lưu danh sách nhiệm vụ spam đang chạy
+# Cấu trúc: {user_id: {"task": asyncio.Task, "token": str, "kenh_id": int, "noi_dung": str, "so_lan_moi_lan": int}}
+danh_sach_spam = {}
+
 # ============ MODAL NHẬP TOKEN, ID KÊNH, NỘI DUNG ============
-class SpamModal(discord.ui.Modal, title="Cấu hình Spam"):
+class SpamModal(discord.ui.Modal, title="Cấu hình Spam 30s"):
     token_input = discord.ui.TextInput(
         label="Token user",
         placeholder="Dán token acc clone đã vào server",
@@ -46,12 +52,12 @@ class SpamModal(discord.ui.Modal, title="Cấu hình Spam"):
         max_length=2000,
     )
     solan_input = discord.ui.TextInput(
-        label="Số lần spam",
-        placeholder="Mặc định 10",
+        label="Số lần mỗi 30 giây",
+        placeholder="Mặc định 1",
         style=discord.TextStyle.short,
         required=False,
         max_length=5,
-        default="10",
+        default="1",
     )
 
     def __init__(self):
@@ -72,130 +78,137 @@ class SpamModal(discord.ui.Modal, title="Cấu hình Spam"):
         kenh_id = int(kenh_id_raw)
 
         try:
-            so_lan = int(self.solan_input.value.strip() or "10")
-            so_lan = max(1, min(so_lan, 200))
+            so_lan_moi_lan = int(self.solan_input.value.strip() or "1")
+            so_lan_moi_lan = max(1, min(so_lan_moi_lan, 20))
         except ValueError:
-            so_lan = 10
+            so_lan_moi_lan = 1
+
+        user_id = interaction.user.id
+
+        # Nếu đã có task đang chạy thì dừng trước
+        if user_id in danh_sach_spam:
+            danh_sach_spam[user_id]["task"].cancel()
+            try:
+                await danh_sach_spam[user_id]["task"]
+            except asyncio.CancelledError:
+                pass
+            del danh_sach_spam[user_id]
 
         await interaction.response.defer(ephemeral=True)
 
-        try:
-            ket_qua = await thuc_hien_spam(token, kenh_id, noi_dung, so_lan)
-        except Exception as e:
-            await interaction.followup.send(
-                f"Lỗi khi thực thi spam: {type(e).__name__}: {e}",
-                ephemeral=True
-            )
-            return
+        # Kiểm tra token trước
+        async with aiohttp.ClientSession() as session:
+            check = await kiem_tra_token(session, token)
+            if check["status"] != "live":
+                await interaction.followup.send(
+                    f"Token không hợp lệ: {check.get('status')}",
+                    ephemeral=True
+                )
+                return
+
+        # Tạo task spam chạy nền
+        task = asyncio.create_task(
+            vong_lap_spam(user_id, token, kenh_id, noi_dung, so_lan_moi_lan)
+        )
+
+        danh_sach_spam[user_id] = {
+            "task": task,
+            "token": token,
+            "kenh_id": kenh_id,
+            "noi_dung": noi_dung,
+            "so_lan_moi_lan": so_lan_moi_lan,
+            "bat_dau": time.time(),
+        }
 
         await interaction.followup.send(
-            f"Kết quả spam kênh `{kenh_id}`:\n"
-            f"- Gửi thành công: {ket_qua['thanh_cong']}/{so_lan}\n"
-            f"- Lỗi: {ket_qua['loi']}\n"
-            f"- Trạng thái token: {ket_qua['trang_thai_token']}",
+            f"Đã bật spam chu kỳ 30 giây.\n"
+            f"- Kênh: `{kenh_id}`\n"
+            f"- Nội dung: {noi_dung[:50]}\n"
+            f"- Số tin mỗi 30s: {so_lan_moi_lan}\n"
+            f"- Dùng `/stopspam` để dừng.",
             ephemeral=True
         )
 
-# ============ HÀM SPAM QUA API (CHỈ SPAM, KHÔNG JOIN) ============
-async def thuc_hien_spam(token, kenh_id, noi_dung, so_lan):
+# ============ KIỂM TRA TOKEN ============
+async def kiem_tra_token(session, token):
+    headers = {
+        "Authorization": token,
+        "User-Agent": fake.user_agent(),
+    }
+    try:
+        async with session.get(
+            "https://discord.com/api/v9/users/@me",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=10)
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                return {"status": "live", "username": data.get("username")}
+            elif resp.status == 401:
+                return {"status": "dead"}
+            else:
+                return {"status": f"error_{resp.status}"}
+    except Exception as e:
+        return {"status": f"timeout_{type(e).__name__}"}
+
+# ============ VÒNG LẶP SPAM 30 GIÂY ============
+async def vong_lap_spam(user_id, token, kenh_id, noi_dung, so_lan_moi_lan):
     headers = {
         "Authorization": token,
         "Content-Type": "application/json",
         "User-Agent": fake.user_agent(),
     }
 
-    thanh_cong = 0
-    loi = 0
-    trang_thai_token = "không rõ"
-
     async with aiohttp.ClientSession() as session:
-        # Bước 1: Kiểm tra token còn sống
-        try:
-            async with session.get(
-                "https://discord.com/api/v9/users/@me",
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    trang_thai_token = f"sống ({data.get('username')})"
-                elif resp.status == 401:
-                    return {
-                        "thanh_cong": 0,
-                        "loi": 0,
-                        "trang_thai_token": "chết (401)"
-                    }
-                else:
-                    trang_thai_token = f"lỗi {resp.status}"
-        except Exception as e:
-            return {
-                "thanh_cong": 0,
-                "loi": 0,
-                "trang_thai_token": f"timeout ({type(e).__name__})"
-            }
-
-        # Bước 2: Kiểm tra token đã vào kênh chưa (bắt buộc đã vào)
-        try:
-            async with session.get(
-                f"https://discord.com/api/v9/channels/{kenh_id}",
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                if resp.status == 404:
-                    return {
-                        "thanh_cong": 0,
-                        "loi": 0,
-                        "trang_thai_token": f"{trang_thai_token} | kênh không tồn tại hoặc token chưa vào server"
-                    }
-                elif resp.status == 403:
-                    return {
-                        "thanh_cong": 0,
-                        "loi": 0,
-                        "trang_thai_token": f"{trang_thai_token} | không có quyền truy cập kênh"
-                    }
-                elif resp.status != 200:
-                    return {
-                        "thanh_cong": 0,
-                        "loi": 0,
-                        "trang_thai_token": f"{trang_thai_token} | lỗi kênh {resp.status}"
-                    }
-        except Exception:
-            pass
-
-        # Bước 3: Spam tin nhắn vào kênh
-        for _ in range(so_lan):
+        while True:
             try:
-                async with session.post(
-                    f"https://discord.com/api/v9/channels/{kenh_id}/messages",
-                    json={"content": noi_dung},
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as resp:
-                    if resp.status == 200:
-                        thanh_cong += 1
-                    elif resp.status == 429:
-                        # Bị rate limit, nghỉ lâu
-                        await asyncio.sleep(10)
-                        loi += 1
-                    elif resp.status in (401, 403):
-                        trang_thai_token = f"bị chặn ({resp.status})"
-                        break
-                    else:
-                        loi += 1
-                # Nghỉ ngẫu nhiên giữa các tin
-                await asyncio.sleep(random.uniform(1.2, 2.8))
-            except Exception:
-                loi += 1
-                continue
+                # Gửi số_lan_moi_lan tin trong mỗi chu kỳ
+                for _ in range(so_lan_moi_lan):
+                    try:
+                        async with session.post(
+                            f"https://discord.com/api/v9/channels/{kenh_id}/messages",
+                            json={"content": noi_dung},
+                            headers=headers,
+                            timeout=aiohttp.ClientTimeout(total=10)
+                        ) as resp:
+                            if resp.status == 200:
+                                print(f"[SPAM OK] user={user_id} kenh={kenh_id}")
+                            elif resp.status == 429:
+                                # Bị rate limit, chờ lâu
+                                retry_after = 10
+                                try:
+                                    data = await resp.json()
+                                    retry_after = float(data.get("retry_after", 10))
+                                except Exception:
+                                    pass
+                                await asyncio.sleep(retry_after)
+                            elif resp.status in (401, 403):
+                                # Token chết hoặc bị chặn, dừng task
+                                print(f"[STOP] user={user_id} token bị chặn ({resp.status})")
+                                if user_id in danh_sach_spam:
+                                    del danh_sach_spam[user_id]
+                                return
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        continue
 
-    return {
-        "thanh_cong": thanh_cong,
-        "loi": loi,
-        "trang_thai_token": trang_thai_token
-    }
+                    # Nghỉ ngắn giữa các tin trong cùng chu kỳ
+                    if so_lan_moi_lan > 1:
+                        await asyncio.sleep(random.uniform(1.0, 2.0))
 
-# ============ SLASH COMMAND /spam ============
-@tree.command(name="spam", description="Spam kênh bằng token đã vào server sẵn")
+                # Chờ đủ 30 giây cho chu kỳ tiếp theo
+                await asyncio.sleep(CHU_KY_SPAM)
+
+            except asyncio.CancelledError:
+                print(f"[CANCEL] user={user_id} đã dừng spam")
+                raise
+            except Exception as e:
+                print(f"[ERR] user={user_id}: {type(e).__name__}")
+                await asyncio.sleep(CHU_KY_SPAM)
+
+# ============ LỆNH /spam ============
+@tree.command(name="spam", description="Bật spam mỗi 30 giây vào kênh chỉ định")
 async def spam_command(interaction: discord.Interaction):
     try:
         await interaction.response.send_modal(SpamModal())
@@ -205,6 +218,53 @@ async def spam_command(interaction: discord.Interaction):
                 f"Không mở được bảng nhập: {type(e).__name__}",
                 ephemeral=True
             )
+
+# ============ LỆNH /stopspam ============
+@tree.command(name="stopspam", description="Dừng spam chu kỳ đang chạy")
+async def stop_spam(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    if user_id not in danh_sach_spam:
+        await interaction.response.send_message(
+            "Bạn không có tiến trình spam nào đang chạy.",
+            ephemeral=True
+        )
+        return
+
+    info = danh_sach_spam[user_id]
+    info["task"].cancel()
+    try:
+        await info["task"]
+    except asyncio.CancelledError:
+        pass
+    del danh_sach_spam[user_id]
+
+    await interaction.response.send_message(
+        "Đã dừng spam.",
+        ephemeral=True
+    )
+
+# ============ LỆNH /trangthaispam ============
+@tree.command(name="trangthaispam", description="Xem trạng thái spam đang chạy")
+async def trang_thai_spam(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    if user_id not in danh_sach_spam:
+        await interaction.response.send_message(
+            "Không có tiến trình spam nào.",
+            ephemeral=True
+        )
+        return
+
+    info = danh_sach_spam[user_id]
+    thoi_gian_chay = int(time.time() - info["bat_dau"])
+
+    await interaction.response.send_message(
+        f"Đang spam:\n"
+        f"- Kênh: `{info['kenh_id']}`\n"
+        f"- Nội dung: {info['noi_dung'][:50]}\n"
+        f"- Mỗi 30s gửi: {info['so_lan_moi_lan']} tin\n"
+        f"- Đã chạy: {thoi_gian_chay} giây",
+        ephemeral=True
+    )
 
 # ============ SỰ KIỆN KHỞI ĐỘNG ============
 @bot.event
@@ -222,17 +282,17 @@ async def on_ready():
     except Exception as e:
         print(f"Sync lệnh lỗi: {type(e).__name__}: {e}")
 
-# ============ XỬ LÝ LỖI TOÀN CỤC ============
+# ============ XỬ LÝ LỖI ============
 @tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if not interaction.response.is_done():
         await interaction.response.send_message(
-            f"Lỗi lệnh: {type(error).__name__}: {error}",
+            f"Lỗi: {type(error).__name__}: {error}",
             ephemeral=True
         )
     else:
         await interaction.followup.send(
-            f"Lỗi lệnh: {type(error).__name__}: {error}",
+            f"Lỗi: {type(error).__name__}: {error}",
             ephemeral=True
         )
 
