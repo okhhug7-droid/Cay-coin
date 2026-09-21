@@ -1,4 +1,4 @@
-# Bot Discord slash command /spam với modal nhập Token, ID kênh, Nội dung
+# Bot Discord slash command /spam - chỉ spam kênh mà token đã vào sẵn
 # Yêu cầu: discord.py 2.0+, aiohttp, faker
 # Cài đặt: pip install discord.py aiohttp faker
 
@@ -15,7 +15,7 @@ fake = Faker()
 
 # Cấu hình
 TOKEN_BOT = os.getenv("TOKEN_BOT")
-GUILD_ID = os.getenv("GUILD_ID")  # Tùy chọn: ID server để sync lệnh nhanh
+GUILD_ID = os.getenv("GUILD_ID")  # Tùy chọn
 
 # Khởi tạo bot
 intents = discord.Intents.all()
@@ -24,15 +24,13 @@ tree = bot.tree
 
 # ============ MODAL NHẬP TOKEN, ID KÊNH, NỘI DUNG ============
 class SpamModal(discord.ui.Modal, title="Cấu hình Spam"):
-    # Ô nhập Token user
     token_input = discord.ui.TextInput(
         label="Token user",
-        placeholder="Dán token acc clone vào đây",
+        placeholder="Dán token acc clone đã vào server",
         style=discord.TextStyle.short,
         required=True,
         max_length=200,
     )
-    # Ô nhập ID kênh
     kenh_id_input = discord.ui.TextInput(
         label="ID kênh",
         placeholder="Nhập ID kênh Discord cần spam",
@@ -40,7 +38,6 @@ class SpamModal(discord.ui.Modal, title="Cấu hình Spam"):
         required=True,
         max_length=25,
     )
-    # Ô nhập nội dung tin nhắn
     noidung_input = discord.ui.TextInput(
         label="Nội dung nhắn",
         placeholder="Nhập nội dung muốn spam",
@@ -48,7 +45,6 @@ class SpamModal(discord.ui.Modal, title="Cấu hình Spam"):
         required=True,
         max_length=2000,
     )
-    # Ô nhập số lần spam
     solan_input = discord.ui.TextInput(
         label="Số lần spam",
         placeholder="Mặc định 10",
@@ -62,12 +58,10 @@ class SpamModal(discord.ui.Modal, title="Cấu hình Spam"):
         super().__init__()
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Lấy dữ liệu từ modal
         token = self.token_input.value.strip()
         noi_dung = self.noidung_input.value
         kenh_id_raw = self.kenh_id_input.value.strip()
 
-        # Kiểm tra ID kênh hợp lệ
         if not kenh_id_raw.isdigit():
             await interaction.response.send_message(
                 "ID kênh không hợp lệ. Phải là dãy số.",
@@ -77,24 +71,16 @@ class SpamModal(discord.ui.Modal, title="Cấu hình Spam"):
 
         kenh_id = int(kenh_id_raw)
 
-        # Xử lý số lần spam
         try:
             so_lan = int(self.solan_input.value.strip() or "10")
-            if so_lan < 1:
-                so_lan = 1
-            if so_lan > 200:
-                so_lan = 200
+            so_lan = max(1, min(so_lan, 200))
         except ValueError:
             so_lan = 10
 
-        # Phản hồi tạm để tránh timeout
         await interaction.response.defer(ephemeral=True)
 
-        # Gọi hàm spam
         try:
-            ket_qua = await thuc_hien_spam(
-                token, kenh_id, noi_dung, so_lan
-            )
+            ket_qua = await thuc_hien_spam(token, kenh_id, noi_dung, so_lan)
         except Exception as e:
             await interaction.followup.send(
                 f"Lỗi khi thực thi spam: {type(e).__name__}: {e}",
@@ -102,7 +88,6 @@ class SpamModal(discord.ui.Modal, title="Cấu hình Spam"):
             )
             return
 
-        # Gửi kết quả
         await interaction.followup.send(
             f"Kết quả spam kênh `{kenh_id}`:\n"
             f"- Gửi thành công: {ket_qua['thanh_cong']}/{so_lan}\n"
@@ -111,7 +96,7 @@ class SpamModal(discord.ui.Modal, title="Cấu hình Spam"):
             ephemeral=True
         )
 
-# ============ HÀM SPAM QUA API ============
+# ============ HÀM SPAM QUA API (CHỈ SPAM, KHÔNG JOIN) ============
 async def thuc_hien_spam(token, kenh_id, noi_dung, so_lan):
     headers = {
         "Authorization": token,
@@ -124,7 +109,7 @@ async def thuc_hien_spam(token, kenh_id, noi_dung, so_lan):
     trang_thai_token = "không rõ"
 
     async with aiohttp.ClientSession() as session:
-        # Kiểm tra token trước
+        # Bước 1: Kiểm tra token còn sống
         try:
             async with session.get(
                 "https://discord.com/api/v9/users/@me",
@@ -135,15 +120,21 @@ async def thuc_hien_spam(token, kenh_id, noi_dung, so_lan):
                     data = await resp.json()
                     trang_thai_token = f"sống ({data.get('username')})"
                 elif resp.status == 401:
-                    trang_thai_token = "chết (401)"
-                    return {"thanh_cong": 0, "loi": 0, "trang_thai_token": trang_thai_token}
+                    return {
+                        "thanh_cong": 0,
+                        "loi": 0,
+                        "trang_thai_token": "chết (401)"
+                    }
                 else:
                     trang_thai_token = f"lỗi {resp.status}"
         except Exception as e:
-            trang_thai_token = f"timeout ({type(e).__name__})"
-            return {"thanh_cong": 0, "loi": 0, "trang_thai_token": trang_thai_token}
+            return {
+                "thanh_cong": 0,
+                "loi": 0,
+                "trang_thai_token": f"timeout ({type(e).__name__})"
+            }
 
-        # Kiểm tra quyền truy cập kênh
+        # Bước 2: Kiểm tra token đã vào kênh chưa (bắt buộc đã vào)
         try:
             async with session.get(
                 f"https://discord.com/api/v9/channels/{kenh_id}",
@@ -154,18 +145,24 @@ async def thuc_hien_spam(token, kenh_id, noi_dung, so_lan):
                     return {
                         "thanh_cong": 0,
                         "loi": 0,
-                        "trang_thai_token": f"{trang_thai_token} | kênh không tồn tại hoặc không có quyền"
+                        "trang_thai_token": f"{trang_thai_token} | kênh không tồn tại hoặc token chưa vào server"
                     }
                 elif resp.status == 403:
                     return {
                         "thanh_cong": 0,
                         "loi": 0,
-                        "trang_thai_token": f"{trang_thai_token} | không có quyền vào kênh"
+                        "trang_thai_token": f"{trang_thai_token} | không có quyền truy cập kênh"
+                    }
+                elif resp.status != 200:
+                    return {
+                        "thanh_cong": 0,
+                        "loi": 0,
+                        "trang_thai_token": f"{trang_thai_token} | lỗi kênh {resp.status}"
                     }
         except Exception:
             pass
 
-        # Vòng lặp gửi tin nhắn
+        # Bước 3: Spam tin nhắn vào kênh
         for _ in range(so_lan):
             try:
                 async with session.post(
@@ -177,13 +174,15 @@ async def thuc_hien_spam(token, kenh_id, noi_dung, so_lan):
                     if resp.status == 200:
                         thanh_cong += 1
                     elif resp.status == 429:
-                        await asyncio.sleep(8)
+                        # Bị rate limit, nghỉ lâu
+                        await asyncio.sleep(10)
                         loi += 1
                     elif resp.status in (401, 403):
                         trang_thai_token = f"bị chặn ({resp.status})"
                         break
                     else:
                         loi += 1
+                # Nghỉ ngẫu nhiên giữa các tin
                 await asyncio.sleep(random.uniform(1.2, 2.8))
             except Exception:
                 loi += 1
@@ -196,12 +195,11 @@ async def thuc_hien_spam(token, kenh_id, noi_dung, so_lan):
     }
 
 # ============ SLASH COMMAND /spam ============
-@tree.command(name="spam", description="Mở bảng nhập token, ID kênh và nội dung để spam")
+@tree.command(name="spam", description="Spam kênh bằng token đã vào server sẵn")
 async def spam_command(interaction: discord.Interaction):
     try:
         await interaction.response.send_modal(SpamModal())
     except Exception as e:
-        # Nếu modal không mở được do đã response trước đó
         if not interaction.response.is_done():
             await interaction.response.send_message(
                 f"Không mở được bảng nhập: {type(e).__name__}",
@@ -220,7 +218,7 @@ async def on_ready():
             print(f"Đã sync lệnh cho guild {GUILD_ID}")
         else:
             await tree.sync()
-            print("Đã sync lệnh global (có thể mất tới 1 giờ để hiển thị)")
+            print("Đã sync lệnh global")
     except Exception as e:
         print(f"Sync lệnh lỗi: {type(e).__name__}: {e}")
 
@@ -240,5 +238,5 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 if __name__ == "__main__":
     if not TOKEN_BOT:
-        raise RuntimeError("Chưa cấu hình biến môi trường TOKEN_BOT trên Railway.")
+        raise RuntimeError("Chưa cấu hình biến môi trường TOKEN_BOT.")
     bot.run(TOKEN_BOT)
