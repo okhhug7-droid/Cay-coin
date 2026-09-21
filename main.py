@@ -1,10 +1,10 @@
-# Bot Discord slash command /spam - spam mỗi 30 giây một lần
+# Bot Discord slash command /spam - spam mỗi 20 giây một lần
 # Yêu cầu: discord.py 2.0+, aiohttp, faker
 # Cài đặt: pip install discord.py aiohttp faker
 
 import discord
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
 import aiohttp
 import asyncio
 import random
@@ -17,7 +17,7 @@ fake = Faker()
 # Cấu hình
 TOKEN_BOT = os.getenv("TOKEN_BOT")
 GUILD_ID = os.getenv("GUILD_ID")  # Tùy chọn
-CHU_KY_SPAM = 30  # Giây, spam mỗi 30 giây
+CHU_KY_SPAM = 20  # Giây, spam mỗi 20 giây
 
 # Khởi tạo bot
 intents = discord.Intents.all()
@@ -25,11 +25,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
 # Lưu danh sách nhiệm vụ spam đang chạy
-# Cấu trúc: {user_id: {"task": asyncio.Task, "token": str, "kenh_id": int, "noi_dung": str, "so_lan_moi_lan": int}}
 danh_sach_spam = {}
 
 # ============ MODAL NHẬP TOKEN, ID KÊNH, NỘI DUNG ============
-class SpamModal(discord.ui.Modal, title="Cấu hình Spam 30s"):
+class SpamModal(discord.ui.Modal, title="Cấu hình Spam 20s"):
     token_input = discord.ui.TextInput(
         label="Token user",
         placeholder="Dán token acc clone đã vào server",
@@ -52,7 +51,7 @@ class SpamModal(discord.ui.Modal, title="Cấu hình Spam 30s"):
         max_length=2000,
     )
     solan_input = discord.ui.TextInput(
-        label="Số lần mỗi 30 giây",
+        label="Số lần mỗi 20 giây",
         placeholder="Mặc định 1",
         style=discord.TextStyle.short,
         required=False,
@@ -121,10 +120,10 @@ class SpamModal(discord.ui.Modal, title="Cấu hình Spam 30s"):
         }
 
         await interaction.followup.send(
-            f"Đã bật spam chu kỳ 30 giây.\n"
+            f"Đã bật spam chu kỳ 20 giây.\n"
             f"- Kênh: `{kenh_id}`\n"
             f"- Nội dung: {noi_dung[:50]}\n"
-            f"- Số tin mỗi 30s: {so_lan_moi_lan}\n"
+            f"- Số tin mỗi 20s: {so_lan_moi_lan}\n"
             f"- Dùng `/stopspam` để dừng.",
             ephemeral=True
         )
@@ -151,7 +150,7 @@ async def kiem_tra_token(session, token):
     except Exception as e:
         return {"status": f"timeout_{type(e).__name__}"}
 
-# ============ VÒNG LẶP SPAM 30 GIÂY ============
+# ============ VÒNG LẶP SPAM 20 GIÂY ============
 async def vong_lap_spam(user_id, token, kenh_id, noi_dung, so_lan_moi_lan):
     headers = {
         "Authorization": token,
@@ -174,7 +173,6 @@ async def vong_lap_spam(user_id, token, kenh_id, noi_dung, so_lan_moi_lan):
                             if resp.status == 200:
                                 print(f"[SPAM OK] user={user_id} kenh={kenh_id}")
                             elif resp.status == 429:
-                                # Bị rate limit, chờ lâu
                                 retry_after = 10
                                 try:
                                     data = await resp.json()
@@ -183,7 +181,6 @@ async def vong_lap_spam(user_id, token, kenh_id, noi_dung, so_lan_moi_lan):
                                     pass
                                 await asyncio.sleep(retry_after)
                             elif resp.status in (401, 403):
-                                # Token chết hoặc bị chặn, dừng task
                                 print(f"[STOP] user={user_id} token bị chặn ({resp.status})")
                                 if user_id in danh_sach_spam:
                                     del danh_sach_spam[user_id]
@@ -197,7 +194,7 @@ async def vong_lap_spam(user_id, token, kenh_id, noi_dung, so_lan_moi_lan):
                     if so_lan_moi_lan > 1:
                         await asyncio.sleep(random.uniform(1.0, 2.0))
 
-                # Chờ đủ 30 giây cho chu kỳ tiếp theo
+                # Chờ đủ 20 giây cho chu kỳ tiếp theo
                 await asyncio.sleep(CHU_KY_SPAM)
 
             except asyncio.CancelledError:
@@ -208,7 +205,7 @@ async def vong_lap_spam(user_id, token, kenh_id, noi_dung, so_lan_moi_lan):
                 await asyncio.sleep(CHU_KY_SPAM)
 
 # ============ LỆNH /spam ============
-@tree.command(name="spam", description="Bật spam mỗi 30 giây vào kênh chỉ định")
+@tree.command(name="spam", description="Bật spam mỗi 20 giây vào kênh chỉ định")
 async def spam_command(interaction: discord.Interaction):
     try:
         await interaction.response.send_modal(SpamModal())
@@ -261,7 +258,7 @@ async def trang_thai_spam(interaction: discord.Interaction):
         f"Đang spam:\n"
         f"- Kênh: `{info['kenh_id']}`\n"
         f"- Nội dung: {info['noi_dung'][:50]}\n"
-        f"- Mỗi 30s gửi: {info['so_lan_moi_lan']} tin\n"
+        f"- Mỗi 20s gửi: {info['so_lan_moi_lan']} tin\n"
         f"- Đã chạy: {thoi_gian_chay} giây",
         ephemeral=True
     )
